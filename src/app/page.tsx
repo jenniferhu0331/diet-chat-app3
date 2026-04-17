@@ -1,65 +1,267 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import rehypeRaw from "rehype-raw";
+
+type Message = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+};
+
+const getGreetingByTime = () => {
+  //const hour = new Date().getHours();
+  const hour = new Date().getHours();
+    if (hour < 3) {
+      return "哇！你還沒睡喔 在看劇嗎 還是功課很多";
+    }
+    if (hour < 8) {
+      return "唉呦 今天很早起喔 吃早餐了嗎？要幫你找嗎";
+    }
+    if (hour < 10) {
+      return "早安～想吃什麼？我也可以幫你找附近還有開的店";
+    }
+    
+    if (hour < 17) {
+      return "嗨，午安～今天想吃點什麼？我可以幫你找附近的選擇。";
+    }
+    return "嗨，晚安～今天想吃什麼？我也可以幫你找附近還有開的店。";
+  
+};
+
+export default function HomePage() {
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      id: "welcome-message",
+      role: "assistant",
+      text: getGreetingByTime(),
+    },
+  ]);
+  const [input, setInput] = useState("");
+  const [lat, setLat] = useState<number | null>(null);
+  const [lng, setLng] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [locationReady, setLocationReady] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const lastSendTimeRef = useRef(0);
+
+  const addMessage = (role: "user" | "assistant", text: string) => {
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        role,
+        text,
+      },
+    ]);
+  };
+
+  const getLocation = () => {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLat(pos.coords.latitude);
+        setLng(pos.coords.longitude);
+        setLocationReady(true);
+        addMessage("assistant", "收到你的位置了，之後如果你想找附近的店，我可以直接幫你查。");
+      },
+      (err) => {
+        addMessage("assistant", "我這邊沒有拿到定位，不過你還是可以先跟我聊天。");
+        alert("定位失敗：" + err.message);
+      }
+    );
+  };
+
+  const sendMessage = async () => {
+    if (!input.trim() || loading) return;
+
+    const now = Date.now();
+    if (now - lastSendTimeRef.current < 1200) return;
+    lastSendTimeRef.current = now;
+
+    const userText = input.trim();
+    const historyToSend = [...messages];
+
+    setInput("");
+    addMessage("user", userText);
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: userText,
+          lat,
+          lng,
+          history: historyToSend,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (data.parts && Array.isArray(data.parts)) {
+        for (const part of data.parts) {
+          if (part?.text) {
+            addMessage("assistant", part.text);
+          }
+        }
+      } else if (data.reply) {
+        addMessage("assistant", data.reply);
+      } else if (data.error) {
+        addMessage("assistant", `發生錯誤：${data.error}`);
+      } else {
+        addMessage("assistant", "我剛剛沒有順利回覆耶。");
+      }
+    } catch {
+      addMessage("assistant", "剛剛出了點問題，你可以再試一次。");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const uploadImage = async (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    addMessage("user", `［上傳了一張圖片：${file.name}］`);
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (data.analysis) {
+        addMessage("assistant", data.analysis);
+      } else if (data.error) {
+        addMessage("assistant", `圖片處理失敗：${data.error}`);
+      } else {
+        addMessage("assistant", "我有收到圖片，但暫時沒辦法分析。");
+      }
+    } catch {
+      addMessage("assistant", "圖片上傳失敗了，等等再試一次看看。");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <main className="min-h-screen bg-stone-100">
+      <div className="mx-auto flex min-h-screen max-w-3xl flex-col">
+        <header className="sticky top-0 z-10 border-b bg-white px-4 py-3">
+          <h1 className="text-lg font-semibold">Diet Chat</h1>
+          <p className="text-sm text-gray-500">
+            {locationReady ? "已取得定位" : "尚未取得定位"}
           </p>
+        </header>
+
+        <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
+          {messages.map((msg) => (
+            <div
+              key={msg.id}
+              className={`flex ${
+                msg.role === "user" ? "justify-end" : "justify-start"
+              }`}
+            >
+              <div
+                className={`max-w-[80%] rounded-2xl px-4 py-3 shadow-sm ${
+                  msg.role === "user"
+                    ? "bg-blue-600 text-white"
+                    : "bg-white text-gray-900"
+                }`}
+              >
+                <div className="whitespace-pre-wrap break-words">
+                  <ReactMarkdown
+                    rehypePlugins={[rehypeRaw]}
+                    components={{
+                      a: ({ ...props }) => (
+                        <a
+                          {...props}
+                          className={`underline ${
+                            msg.role === "user"
+                              ? "text-white"
+                              : "text-blue-600"
+                          }`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        />
+                      ),
+                      p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                    }}
+                  >
+                    {msg.text}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {loading && (
+            <div className="flex justify-start">
+              <div className="rounded-2xl bg-white px-4 py-3 text-gray-500 shadow-sm">
+                正在回覆…
+              </div>
+            </div>
+          )}
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+
+        <div className="border-t bg-white p-4 space-y-3">
+          <div className="flex gap-2">
+            <button
+              onClick={getLocation}
+              className="rounded-xl border px-3 py-2 text-sm"
+            >
+              取得定位
+            </button>
+
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="rounded-xl border px-3 py-2 text-sm"
+            >
+              上傳照片
+            </button>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) uploadImage(file);
+              }}
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+          </div>
+
+          <div className="flex gap-2">
+            <textarea
+              className="min-h-[52px] flex-1 rounded-2xl border p-3"
+              placeholder="想說什麼都可以，也可以問我附近有什麼吃的"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  sendMessage();
+                }
+              }}
+            />
+            <button
+              onClick={sendMessage}
+              disabled={loading}
+              className="rounded-2xl bg-black px-4 py-2 text-white disabled:opacity-50"
+            >
+              送出
+            </button>
+          </div>
         </div>
-      </main>
-    </div>
+      </div>
+    </main>
   );
 }
