@@ -1,189 +1,100 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
-import { supabaseBrowser } from "@/lib/supabase";
+import { addFoodEntry } from "@/lib/foodStore";
 
 type Message = {
   id: string;
   role: "user" | "assistant";
   text: string;
+  detectedFoods?: string[];
 };
 
 const getGreetingByTime = () => {
   const hour = new Date().getHours();
-
-  if (hour < 3) {
-    return "哇！你還沒睡喔 在看劇嗎 還是功課很多";
-  }
-  if (hour < 8) {
-    return "唉呦 今天很早起喔 吃早餐了嗎？要幫你找嗎";
-  }
-  if (hour < 10) {
-    return "早安～想吃什麼？我也可以幫你找附近還有開的店";
-  }
-  if (hour < 17) {
-    return "嗨，午安～今天想吃點什麼？我可以幫你找附近的選擇。";
-  }
+  if (hour < 3) return "哇！你還沒睡喔 在看劇嗎 還是功課很多";
+  if (hour < 8) return "唉呦 今天很早起喔 吃早餐了嗎？要幫你找嗎";
+  if (hour < 10) return "早安～想吃什麼？我也可以幫你找附近還有開的店";
+  if (hour < 17) return "嗨，午安～今天想吃點什麼？我可以幫你找附近的選擇。";
   return "嗨，晚安～今天想吃什麼？我也可以幫你找附近還有開的店。";
 };
 
+function currentMeal(): "早餐" | "午餐" | "晚餐" | "點心" {
+  const h = new Date().getHours();
+  if (h < 10) return "早餐";
+  if (h < 14) return "午餐";
+  if (h < 20) return "晚餐";
+  return "點心";
+}
+
+function detectFoodsInMessage(text: string): string[] {
+  const pattern = /(?:吃了?|點了?|喝了?|來了?|有吃?|吃過?|吃到?)[了一]?\s*([^\s,，。！？、\d]{2,12})/g;
+  const found = new Set<string>();
+  let m;
+  while ((m = pattern.exec(text)) !== null) {
+    const raw = m[1].replace(/[了嗎呢啊喔唷哦！？。，、\s]/g, "").trim();
+    if (raw.length >= 2) found.add(raw);
+  }
+  return [...found];
+}
+
+function FoodChips({ foods, onSave }: { foods: string[]; onSave: (f: string) => void }) {
+  const [saved, setSaved] = useState<Set<string>>(new Set());
+  function save(f: string) {
+    onSave(f);
+    setSaved((s) => new Set(s).add(f));
+  }
+  if (foods.length === 0) return null;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 6 }}>
+      {foods.map((f) => (
+        <button
+          key={f}
+          onClick={() => save(f)}
+          disabled={saved.has(f)}
+          style={{
+            padding: "4px 12px",
+            borderRadius: 20,
+            border: "0.5px solid rgba(200,180,220,0.6)",
+            background: saved.has(f) ? "rgba(122,90,154,0.1)" : "rgba(255,255,255,0.7)",
+            backdropFilter: "blur(10px)",
+            color: saved.has(f) ? "#b0a0c8" : "#7a5a9a",
+            fontSize: 12,
+            cursor: saved.has(f) ? "default" : "pointer",
+            fontFamily: "inherit",
+            transition: "all 0.15s",
+          }}
+        >
+          {saved.has(f) ? "✓" : "+"} {f}
+        </button>
+      ))}
+      {foods.some((f) => !saved.has(f)) && (
+        <span style={{ fontSize: 10, color: "#c0b0c8" }}>點擊記錄到日記</span>
+      )}
+    </div>
+  );
+}
+
 export default function HomePage() {
   const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "welcome-message",
-      role: "assistant",
-      text: getGreetingByTime(),
-    },
+    { id: "welcome-message", role: "assistant", text: getGreetingByTime() },
   ]);
   const [input, setInput] = useState("");
   const [lat, setLat] = useState<number | null>(null);
   const [lng, setLng] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [locationReady, setLocationReady] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastSendTimeRef = useRef(0);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // 新增：使用者初始化相關 state
-  const [authUserId, setAuthUserId] = useState<string | null>(null);
-  const [displayId, setDisplayId] = useState("");
-  const [isReady, setIsReady] = useState(false);
-  const [needsProfileSetup, setNeedsProfileSetup] = useState(false);
-
-  const addMessage = (role: "user" | "assistant", text: string) => {
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        role,
-        text,
-      },
-    ]);
-  };
-
-  // 新增：初始化匿名登入
-  console.log("SUPABASE URL:", process.env.NEXT_PUBLIC_SUPABASE_URL);
-  console.log("SUPABASE ANON KEY exists:", !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
-  useEffect(() => {
-    const initAnonymousUser = async () => {
-      const {
-        data: { session },
-      } = await supabaseBrowser.auth.getSession();
-
-      if (session?.user?.id) {
-        setAuthUserId(session.user.id);
-
-        const savedDisplayId = localStorage.getItem("display_id");
-        if (savedDisplayId) {
-          setDisplayId(savedDisplayId);
-          setNeedsProfileSetup(false);
-        } else {
-          setNeedsProfileSetup(true);
-        }
-
-        setIsReady(true);
-        return;
-      }
-
-      const { data, error } = await supabaseBrowser.auth.signInAnonymously();
-
-      if (error) {
-        console.error("Anonymous sign-in failed:", error);
-        return;
-      }
-
-      if (data.user?.id) {
-        setAuthUserId(data.user.id);
-
-        const savedDisplayId = localStorage.getItem("display_id");
-        if (savedDisplayId) {
-          setDisplayId(savedDisplayId);
-          setNeedsProfileSetup(false);
-        } else {
-          setNeedsProfileSetup(true);
-        }
-
-        setIsReady(true);
-      }
-    };
-
-    initAnonymousUser();
-  }, []);
-
-  // 新增：讀取聊天記憶
-  useEffect(() => {
-    const loadHistory = async () => {
-      if (!authUserId) return;
-      if (needsProfileSetup) return;
-
-      const res = await fetch(`/api/chat/history?userId=${authUserId}`);
-      const data = await res.json();
-
-      if (data.messages?.length) {
-        setMessages(
-          data.messages.map((m: any) => ({
-            id: String(m.id),
-            role: m.role,
-            text: m.text,
-          }))
-        );
-      } else {
-        // 如果還沒有歷史訊息，保留你的時間 greeting
-        setMessages([
-          {
-            id: "welcome-message",
-            role: "assistant",
-            text: getGreetingByTime(),
-          },
-        ]);
-      }
-    };
-
-    loadHistory();
-  }, [authUserId, needsProfileSetup]);
-
-  const setupProfile = async () => {
-    if (!authUserId || !displayId.trim()) return;
-
-    const res = await fetch("/api/auth/init-user", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        authUserId,
-        displayId: displayId.trim(),
-      }),
-    });
-
-    const data = await res.json();
-
-    if (data.error) {
-      alert(data.error);
-      return;
-    }
-
-    localStorage.setItem("display_id", displayId.trim());
-    setNeedsProfileSetup(false);
-  };
-
-  const saveChatMessage = async (
-    userId: string,
-    role: "user" | "assistant",
-    text: string
-  ) => {
-    await fetch("/api/chat/history", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        userId,
-        role,
-        text,
-      }),
-    });
+  const addMessage = (role: "user" | "assistant", text: string, detectedFoods?: string[]) => {
+    setMessages((prev) => [...prev, { id: crypto.randomUUID(), role, text, detectedFoods }]);
+    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
   };
 
   const getLocation = () => {
@@ -192,10 +103,7 @@ export default function HomePage() {
         setLat(pos.coords.latitude);
         setLng(pos.coords.longitude);
         setLocationReady(true);
-        addMessage(
-          "assistant",
-          "收到你的位置了，之後如果你想找附近的店，我可以直接幫你查。"
-        );
+        addMessage("assistant", "收到你的位置了，之後如果你想找附近的店，我可以直接幫你查。");
       },
       (err) => {
         addMessage("assistant", "我這邊沒有拿到定位，不過你還是可以先跟我聊天。");
@@ -204,58 +112,39 @@ export default function HomePage() {
     );
   };
 
+  const saveFood = (foodName: string) => {
+    addFoodEntry({ name: foodName, meal: currentMeal(), source: "chat" });
+    setToast(`已將「${foodName}」記錄到日記`);
+    setTimeout(() => setToast(null), 2000);
+  };
+
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
-
     const now = Date.now();
     if (now - lastSendTimeRef.current < 1200) return;
     lastSendTimeRef.current = now;
 
     const userText = input.trim();
     const historyToSend = [...messages];
+    const foods = detectFoodsInMessage(userText);
 
     setInput("");
-    addMessage("user", userText);
+    addMessage("user", userText, foods);
     setLoading(true);
 
     try {
-      // 先存 user 訊息
-      if (authUserId) {
-        await saveChatMessage(authUserId, "user", userText);
-      }
-
       const res = await fetch("/api/chat", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          message: userText,
-          lat,
-          lng,
-          history: historyToSend,
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: userText, lat, lng, history: historyToSend }),
       });
-
       const data = await res.json();
-
       if (data.parts && Array.isArray(data.parts)) {
         for (const part of data.parts) {
-          if (part?.text) {
-            addMessage("assistant", part.text);
-
-            // 存 assistant 訊息
-            if (authUserId) {
-              await saveChatMessage(authUserId, "assistant", part.text);
-            }
-          }
+          if (part?.text) addMessage("assistant", part.text);
         }
       } else if (data.reply) {
         addMessage("assistant", data.reply);
-
-        if (authUserId) {
-          await saveChatMessage(authUserId, "assistant", data.reply);
-        }
       } else if (data.error) {
         addMessage("assistant", `發生錯誤：${data.error}`);
       } else {
@@ -269,171 +158,255 @@ export default function HomePage() {
   };
 
   const uploadImage = async (file: File) => {
-  const formData = new FormData();
-  formData.append("file", file);
-  formData.append("userId", authUserId!);
-  formData.append("mealType", "snack"); // 先預設，可之後再改成讓使用者選
-
-  addMessage("user", `［上傳了一張圖片：${file.name}］`);
-  setLoading(true);
-
-  try {
-    const res = await fetch("/api/upload", {
-      method: "POST",
-      body: formData,
-    });
-
-    const data = await res.json();
-
-    if (data.analysis) {
-      addMessage("assistant", data.analysis);
-
-      if (authUserId) {
-        await saveChatMessage(authUserId, "user", `［上傳了一張圖片：${file.name}］`);
-        await saveChatMessage(authUserId, "assistant", data.analysis);
-      }
-    } else if (data.error) {
-      addMessage("assistant", `圖片處理失敗：${data.error}`);
-    } else {
-      addMessage("assistant", "我有收到圖片，但暫時沒辦法分析。");
+    const formData = new FormData();
+    formData.append("file", file);
+    addMessage("user", `［上傳了一張圖片：${file.name}］`);
+    setLoading(true);
+    try {
+      const res = await fetch("/api/upload", { method: "POST", body: formData });
+      const data = await res.json();
+      if (data.analysis) addMessage("assistant", data.analysis);
+      else if (data.error) addMessage("assistant", `圖片處理失敗：${data.error}`);
+      else addMessage("assistant", "我有收到圖片，但暫時沒辦法分析。");
+    } catch {
+      addMessage("assistant", "圖片上傳失敗了，等等再試一次看看。");
+    } finally {
+      setLoading(false);
     }
-  } catch {
-    addMessage("assistant", "圖片上傳失敗了，等等再試一次看看。");
-  } finally {
-    setLoading(false);
-  }
-};
-
-  if (!isReady) {
-    return (
-      <main className="min-h-screen flex items-center justify-center bg-stone-100">
-        <div className="rounded-2xl bg-white px-6 py-4 shadow-sm text-gray-700">
-          正在初始化使用者…
-        </div>
-      </main>
-    );
-  }
-
-  if (needsProfileSetup) {
-    return (
-      <main className="min-h-screen flex items-center justify-center bg-stone-100 p-6">
-        <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-sm space-y-4">
-          <h1 className="text-xl font-semibold">先設定你的使用者 ID</h1>
-          <p className="text-sm text-gray-600">
-            之後聊天記憶、照片與回顧都會綁定這個 ID。
-          </p>
-          <input
-            className="w-full rounded-xl border p-3"
-            placeholder="例如 amy01"
-            value={displayId}
-            onChange={(e) => setDisplayId(e.target.value)}
-          />
-          <button
-            onClick={setupProfile}
-            className="w-full rounded-xl bg-black px-4 py-2 text-white"
-          >
-            開始使用
-          </button>
-        </div>
-      </main>
-    );
-  }
+  };
 
   return (
-    <main className="min-h-screen bg-stone-100">
-      <div className="mx-auto flex min-h-screen max-w-3xl flex-col">
-        <header className="sticky top-0 z-10 border-b bg-white px-4 py-3">
-          <h1 className="text-lg font-semibold">Diet Chat</h1>
-          <p className="text-sm text-gray-500">
-            {locationReady ? "已取得定位" : "尚未取得定位"}
-            {displayId ? ` ・ 使用者：${displayId}` : ""}
-          </p>
-        </header>
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500&family=DM+Serif+Display:ital@0;1&display=swap');
 
-        <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
-          {messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex ${
-                msg.role === "user" ? "justify-end" : "justify-start"
-              }`}
-            >
-              <div
-                className={`max-w-[80%] rounded-2xl px-4 py-3 shadow-sm ${
-                  msg.role === "user"
-                    ? "bg-blue-600 text-white"
-                    : "bg-white text-gray-900"
-                }`}
-              >
-                <div className="whitespace-pre-wrap break-words">
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { height: 100%; overflow: hidden; }
+        body { font-family: 'Noto Sans TC', sans-serif; background: #faf7f5; }
+
+        .blobs { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 0; }
+        .blob { position: absolute; border-radius: 50%; filter: blur(70px); }
+        .b1 { width: 300px; height: 300px; background: radial-gradient(#e8d5f0, transparent 70%); top: -80px; right: -80px; }
+        .b2 { width: 240px; height: 240px; background: radial-gradient(#fce4d0, transparent 70%); bottom: 10%; left: -60px; }
+        .b3 { width: 180px; height: 180px; background: radial-gradient(#d5e8f0, transparent 70%); top: 45%; right: -40px; }
+
+        .shell {
+          position: relative; z-index: 1;
+          max-width: 480px; margin: 0 auto;
+          height: 100dvh;
+          display: flex; flex-direction: column;
+        }
+
+        .hdr {
+          padding: 52px 20px 14px;
+          display: flex; align-items: center; justify-content: space-between;
+          flex-shrink: 0;
+        }
+        .hdr-left { display: flex; flex-direction: column; gap: 2px; }
+        .hdr-title { font-family: 'DM Serif Display', serif; font-size: 22px; color: #3d2e3d; }
+        .hdr-sub { font-size: 12px; color: #b0a0c0; }
+        .diary-btn {
+          display: flex; align-items: center; gap: 6px;
+          padding: 8px 16px; border-radius: 20px;
+          background: rgba(122,90,154,0.1);
+          border: 0.5px solid rgba(122,90,154,0.2);
+          font-size: 13px; color: #7a5a9a; font-weight: 500;
+          text-decoration: none; transition: background 0.15s;
+        }
+        .diary-btn:hover { background: rgba(122,90,154,0.18); }
+
+        .msgs {
+          flex: 1; overflow-y: auto;
+          padding: 8px 20px 12px;
+          display: flex; flex-direction: column; gap: 14px;
+          scrollbar-width: none;
+        }
+        .msgs::-webkit-scrollbar { display: none; }
+
+        .msg-row-bot { display: flex; flex-direction: column; align-items: flex-start; }
+        .msg-row-user { display: flex; flex-direction: column; align-items: flex-end; }
+
+        .bubble-bot {
+          max-width: 82%;
+          background: rgba(255,255,255,0.65);
+          backdrop-filter: blur(16px);
+          border: 0.5px solid rgba(255,255,255,0.9);
+          border-radius: 4px 20px 20px 20px;
+          padding: 14px 16px;
+          color: #3d2e3d; font-size: 14px; line-height: 1.65;
+          box-shadow: 0 2px 20px rgba(180,140,200,0.07);
+          animation: fadeUp 0.3s ease both;
+        }
+        .bubble-bot p { margin-bottom: 6px; }
+        .bubble-bot p:last-child { margin-bottom: 0; }
+        .bubble-bot a { color: #7a5a9a; text-decoration: underline; }
+
+        .bubble-user {
+          max-width: 72%;
+          background: rgba(100,80,120,0.09);
+          border-radius: 20px 4px 20px 20px;
+          padding: 11px 16px;
+          color: #4a3a5a; font-size: 14px; line-height: 1.55;
+          animation: fadeUp 0.25s ease both;
+        }
+
+        .typing {
+          display: flex; gap: 5px;
+          padding: 13px 16px;
+          background: rgba(255,255,255,0.55);
+          backdrop-filter: blur(12px);
+          border: 0.5px solid rgba(255,255,255,0.9);
+          border-radius: 4px 18px 18px 18px;
+          width: fit-content;
+        }
+        .typing span {
+          width: 6px; height: 6px; border-radius: 50%;
+          background: #c0a8d8; animation: bounce 1.2s infinite;
+        }
+        .typing span:nth-child(2) { animation-delay: 0.2s; }
+        .typing span:nth-child(3) { animation-delay: 0.4s; }
+
+        .bottom {
+          flex-shrink: 0;
+          padding: 8px 20px 32px;
+          background: linear-gradient(to top, rgba(250,247,245,1) 75%, transparent);
+        }
+        .action-row { display: flex; gap: 8px; margin-bottom: 10px; }
+        .action-btn {
+          display: flex; align-items: center; gap: 5px;
+          padding: 7px 14px; border-radius: 20px;
+          background: rgba(255,255,255,0.6);
+          backdrop-filter: blur(10px);
+          border: 0.5px solid rgba(255,255,255,0.9);
+          font-family: 'Noto Sans TC', sans-serif;
+          font-size: 12px; color: #7a5a9a; cursor: pointer;
+          transition: background 0.15s;
+        }
+        .action-btn:hover { background: rgba(255,255,255,0.85); }
+
+        .input-row {
+          display: flex; align-items: flex-end; gap: 10px;
+          background: rgba(255,255,255,0.7);
+          backdrop-filter: blur(20px);
+          border: 0.5px solid rgba(255,255,255,0.95);
+          border-radius: 24px;
+          padding: 10px 10px 10px 18px;
+          box-shadow: 0 4px 24px rgba(180,140,200,0.1);
+        }
+        .input-field {
+          flex: 1; border: none; background: transparent; outline: none;
+          font-family: 'Noto Sans TC', sans-serif;
+          font-size: 14px; color: #3d2e3d;
+          resize: none; min-height: 22px; max-height: 120px; line-height: 1.5;
+        }
+        .input-field::placeholder { color: #c0b0c8; }
+        .send-btn {
+          width: 38px; height: 38px; border-radius: 50%;
+          background: #7a5a9a; border: none; cursor: pointer;
+          display: flex; align-items: center; justify-content: center;
+          flex-shrink: 0; transition: background 0.15s, transform 0.15s;
+        }
+        .send-btn:hover:not(:disabled) { background: #6a4a8a; transform: scale(1.05); }
+        .send-btn:active:not(:disabled) { transform: scale(0.95); }
+        .send-btn:disabled { background: #d0c0e0; cursor: default; }
+        .send-btn svg { width: 15px; height: 15px; }
+
+        .toast {
+          position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+          background: rgba(61,46,61,0.9); color: #fff;
+          padding: 10px 20px; border-radius: 20px;
+          font-size: 13px; z-index: 200;
+          backdrop-filter: blur(10px);
+          animation: fadeUp 0.3s ease;
+          white-space: nowrap;
+        }
+
+        @keyframes fadeUp {
+          from { opacity: 0; transform: translateY(10px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes bounce {
+          0%, 80%, 100% { transform: translateY(0); opacity: 0.5; }
+          40% { transform: translateY(-5px); opacity: 1; }
+        }
+      `}</style>
+
+      <div className="blobs">
+        <div className="blob b1" />
+        <div className="blob b2" />
+        <div className="blob b3" />
+      </div>
+
+      {toast && <div className="toast">✓ {toast}</div>}
+
+      <div className="shell">
+        <div className="hdr">
+          <div className="hdr-left">
+            <span className="hdr-title">Diet Chat</span>
+            <span className="hdr-sub">{locationReady ? "📍 已取得定位" : "尚未取得定位"}</span>
+          </div>
+          <Link href="/diary" className="diary-btn">📖 吃吃日記</Link>
+        </div>
+
+        <div className="msgs">
+          {messages.map((msg) =>
+            msg.role === "assistant" ? (
+              <div key={msg.id} className="msg-row-bot">
+                <div className="bubble-bot">
                   <ReactMarkdown
                     rehypePlugins={[rehypeRaw]}
                     components={{
-                      a: ({ ...props }) => (
-                        <a
-                          {...props}
-                          className={`underline ${
-                            msg.role === "user" ? "text-white" : "text-blue-600"
-                          }`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        />
-                      ),
-                      p: ({ children }) => (
-                        <p className="mb-2 last:mb-0">{children}</p>
-                      ),
+                      a: ({ ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+                      p: ({ children }) => <p>{children}</p>,
                     }}
                   >
                     {msg.text}
                   </ReactMarkdown>
                 </div>
               </div>
-            </div>
-          ))}
-
-          {loading && (
-            <div className="flex justify-start">
-              <div className="rounded-2xl bg-white px-4 py-3 text-gray-500 shadow-sm">
-                正在回覆…
+            ) : (
+              <div key={msg.id} className="msg-row-user">
+                <div className="bubble-user">{msg.text}</div>
+                {msg.detectedFoods && msg.detectedFoods.length > 0 && (
+                  <FoodChips foods={msg.detectedFoods} onSave={saveFood} />
+                )}
               </div>
+            )
+          )}
+          {loading && (
+            <div className="msg-row-bot">
+              <div className="typing"><span /><span /><span /></div>
             </div>
           )}
+          <div ref={messagesEndRef} />
         </div>
 
-        <div className="border-t bg-white p-4 space-y-3">
-          <div className="flex gap-2">
-            <button
-              onClick={getLocation}
-              className="rounded-xl border px-3 py-2 text-sm"
-            >
-              取得定位
-            </button>
-
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="rounded-xl border px-3 py-2 text-sm"
-            >
-              上傳照片
-            </button>
-
+        <div className="bottom">
+          <div className="action-row">
+            <button className="action-btn" onClick={getLocation}>📍 取得定位</button>
+            <button className="action-btn" onClick={() => fileInputRef.current?.click()}>📷 上傳照片</button>
             <input
               ref={fileInputRef}
               type="file"
               accept="image/*"
-              className="hidden"
+              style={{ display: "none" }}
               onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (file) uploadImage(file);
               }}
             />
           </div>
-
-          <div className="flex gap-2">
+          <div className="input-row">
             <textarea
-              className="min-h-[52px] flex-1 rounded-2xl border p-3"
+              className="input-field"
               placeholder="想說什麼都可以，也可以問我附近有什麼吃的"
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              rows={1}
+              onChange={(e) => {
+                setInput(e.target.value);
+                e.target.style.height = "auto";
+                e.target.style.height = e.target.scrollHeight + "px";
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -441,16 +414,14 @@ export default function HomePage() {
                 }
               }}
             />
-            <button
-              onClick={sendMessage}
-              disabled={loading}
-              className="rounded-2xl bg-black px-4 py-2 text-white disabled:opacity-50"
-            >
-              送出
+            <button className="send-btn" onClick={sendMessage} disabled={loading || !input.trim()}>
+              <svg viewBox="0 0 24 24" fill="white">
+                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+              </svg>
             </button>
           </div>
         </div>
       </div>
-    </main>
+    </>
   );
 }
