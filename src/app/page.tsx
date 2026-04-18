@@ -1,8 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
+import { supabaseBrowser } from "@/lib/supabase";
 
 type Message = {
   id: string;
@@ -11,23 +12,21 @@ type Message = {
 };
 
 const getGreetingByTime = () => {
-  //const hour = new Date().getHours();
   const hour = new Date().getHours();
-    if (hour < 3) {
-      return "哇！你還沒睡喔 在看劇嗎 還是功課很多";
-    }
-    if (hour < 8) {
-      return "唉呦 今天很早起喔 吃早餐了嗎？要幫你找嗎";
-    }
-    if (hour < 10) {
-      return "早安～想吃什麼？我也可以幫你找附近還有開的店";
-    }
-    
-    if (hour < 17) {
-      return "嗨，午安～今天想吃點什麼？我可以幫你找附近的選擇。";
-    }
-    return "嗨，晚安～今天想吃什麼？我也可以幫你找附近還有開的店。";
-  
+
+  if (hour < 3) {
+    return "哇！你還沒睡喔 在看劇嗎 還是功課很多";
+  }
+  if (hour < 8) {
+    return "唉呦 今天很早起喔 吃早餐了嗎？要幫你找嗎";
+  }
+  if (hour < 10) {
+    return "早安～想吃什麼？我也可以幫你找附近還有開的店";
+  }
+  if (hour < 17) {
+    return "嗨，午安～今天想吃點什麼？我可以幫你找附近的選擇。";
+  }
+  return "嗨，晚安～今天想吃什麼？我也可以幫你找附近還有開的店。";
 };
 
 export default function HomePage() {
@@ -46,6 +45,12 @@ export default function HomePage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastSendTimeRef = useRef(0);
 
+  // 新增：使用者初始化相關 state
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [displayId, setDisplayId] = useState("");
+  const [isReady, setIsReady] = useState(false);
+  const [needsProfileSetup, setNeedsProfileSetup] = useState(false);
+
   const addMessage = (role: "user" | "assistant", text: string) => {
     setMessages((prev) => [
       ...prev,
@@ -57,13 +62,140 @@ export default function HomePage() {
     ]);
   };
 
+  // 新增：初始化匿名登入
+  console.log("SUPABASE URL:", process.env.NEXT_PUBLIC_SUPABASE_URL);
+  console.log("SUPABASE ANON KEY exists:", !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+  useEffect(() => {
+    const initAnonymousUser = async () => {
+      const {
+        data: { session },
+      } = await supabaseBrowser.auth.getSession();
+
+      if (session?.user?.id) {
+        setAuthUserId(session.user.id);
+
+        const savedDisplayId = localStorage.getItem("display_id");
+        if (savedDisplayId) {
+          setDisplayId(savedDisplayId);
+          setNeedsProfileSetup(false);
+        } else {
+          setNeedsProfileSetup(true);
+        }
+
+        setIsReady(true);
+        return;
+      }
+
+      const { data, error } = await supabaseBrowser.auth.signInAnonymously();
+
+      if (error) {
+        console.error("Anonymous sign-in failed:", error);
+        return;
+      }
+
+      if (data.user?.id) {
+        setAuthUserId(data.user.id);
+
+        const savedDisplayId = localStorage.getItem("display_id");
+        if (savedDisplayId) {
+          setDisplayId(savedDisplayId);
+          setNeedsProfileSetup(false);
+        } else {
+          setNeedsProfileSetup(true);
+        }
+
+        setIsReady(true);
+      }
+    };
+
+    initAnonymousUser();
+  }, []);
+
+  // 新增：讀取聊天記憶
+  useEffect(() => {
+    const loadHistory = async () => {
+      if (!authUserId) return;
+      if (needsProfileSetup) return;
+
+      const res = await fetch(`/api/chat/history?userId=${authUserId}`);
+      const data = await res.json();
+
+      if (data.messages?.length) {
+        setMessages(
+          data.messages.map((m: any) => ({
+            id: String(m.id),
+            role: m.role,
+            text: m.text,
+          }))
+        );
+      } else {
+        // 如果還沒有歷史訊息，保留你的時間 greeting
+        setMessages([
+          {
+            id: "welcome-message",
+            role: "assistant",
+            text: getGreetingByTime(),
+          },
+        ]);
+      }
+    };
+
+    loadHistory();
+  }, [authUserId, needsProfileSetup]);
+
+  const setupProfile = async () => {
+    if (!authUserId || !displayId.trim()) return;
+
+    const res = await fetch("/api/auth/init-user", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        authUserId,
+        displayId: displayId.trim(),
+      }),
+    });
+
+    const data = await res.json();
+
+    if (data.error) {
+      alert(data.error);
+      return;
+    }
+
+    localStorage.setItem("display_id", displayId.trim());
+    setNeedsProfileSetup(false);
+  };
+
+  const saveChatMessage = async (
+    userId: string,
+    role: "user" | "assistant",
+    text: string
+  ) => {
+    await fetch("/api/chat/history", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        userId,
+        role,
+        text,
+      }),
+    });
+  };
+
   const getLocation = () => {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setLat(pos.coords.latitude);
         setLng(pos.coords.longitude);
         setLocationReady(true);
-        addMessage("assistant", "收到你的位置了，之後如果你想找附近的店，我可以直接幫你查。");
+        addMessage(
+          "assistant",
+          "收到你的位置了，之後如果你想找附近的店，我可以直接幫你查。"
+        );
       },
       (err) => {
         addMessage("assistant", "我這邊沒有拿到定位，不過你還是可以先跟我聊天。");
@@ -87,6 +219,11 @@ export default function HomePage() {
     setLoading(true);
 
     try {
+      // 先存 user 訊息
+      if (authUserId) {
+        await saveChatMessage(authUserId, "user", userText);
+      }
+
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: {
@@ -106,10 +243,19 @@ export default function HomePage() {
         for (const part of data.parts) {
           if (part?.text) {
             addMessage("assistant", part.text);
+
+            // 存 assistant 訊息
+            if (authUserId) {
+              await saveChatMessage(authUserId, "assistant", part.text);
+            }
           }
         }
       } else if (data.reply) {
         addMessage("assistant", data.reply);
+
+        if (authUserId) {
+          await saveChatMessage(authUserId, "assistant", data.reply);
+        }
       } else if (data.error) {
         addMessage("assistant", `發生錯誤：${data.error}`);
       } else {
@@ -123,33 +269,75 @@ export default function HomePage() {
   };
 
   const uploadImage = async (file: File) => {
-    const formData = new FormData();
-    formData.append("file", file);
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("userId", authUserId!);
+  formData.append("mealType", "snack"); // 先預設，可之後再改成讓使用者選
 
-    addMessage("user", `［上傳了一張圖片：${file.name}］`);
-    setLoading(true);
+  addMessage("user", `［上傳了一張圖片：${file.name}］`);
+  setLoading(true);
 
-    try {
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
+  try {
+    const res = await fetch("/api/upload", {
+      method: "POST",
+      body: formData,
+    });
 
-      const data = await res.json();
+    const data = await res.json();
 
-      if (data.analysis) {
-        addMessage("assistant", data.analysis);
-      } else if (data.error) {
-        addMessage("assistant", `圖片處理失敗：${data.error}`);
-      } else {
-        addMessage("assistant", "我有收到圖片，但暫時沒辦法分析。");
+    if (data.analysis) {
+      addMessage("assistant", data.analysis);
+
+      if (authUserId) {
+        await saveChatMessage(authUserId, "user", `［上傳了一張圖片：${file.name}］`);
+        await saveChatMessage(authUserId, "assistant", data.analysis);
       }
-    } catch {
-      addMessage("assistant", "圖片上傳失敗了，等等再試一次看看。");
-    } finally {
-      setLoading(false);
+    } else if (data.error) {
+      addMessage("assistant", `圖片處理失敗：${data.error}`);
+    } else {
+      addMessage("assistant", "我有收到圖片，但暫時沒辦法分析。");
     }
-  };
+  } catch {
+    addMessage("assistant", "圖片上傳失敗了，等等再試一次看看。");
+  } finally {
+    setLoading(false);
+  }
+};
+
+  if (!isReady) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-stone-100">
+        <div className="rounded-2xl bg-white px-6 py-4 shadow-sm text-gray-700">
+          正在初始化使用者…
+        </div>
+      </main>
+    );
+  }
+
+  if (needsProfileSetup) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-stone-100 p-6">
+        <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-sm space-y-4">
+          <h1 className="text-xl font-semibold">先設定你的使用者 ID</h1>
+          <p className="text-sm text-gray-600">
+            之後聊天記憶、照片與回顧都會綁定這個 ID。
+          </p>
+          <input
+            className="w-full rounded-xl border p-3"
+            placeholder="例如 amy01"
+            value={displayId}
+            onChange={(e) => setDisplayId(e.target.value)}
+          />
+          <button
+            onClick={setupProfile}
+            className="w-full rounded-xl bg-black px-4 py-2 text-white"
+          >
+            開始使用
+          </button>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-stone-100">
@@ -158,6 +346,7 @@ export default function HomePage() {
           <h1 className="text-lg font-semibold">Diet Chat</h1>
           <p className="text-sm text-gray-500">
             {locationReady ? "已取得定位" : "尚未取得定位"}
+            {displayId ? ` ・ 使用者：${displayId}` : ""}
           </p>
         </header>
 
@@ -184,15 +373,15 @@ export default function HomePage() {
                         <a
                           {...props}
                           className={`underline ${
-                            msg.role === "user"
-                              ? "text-white"
-                              : "text-blue-600"
+                            msg.role === "user" ? "text-white" : "text-blue-600"
                           }`}
                           target="_blank"
                           rel="noopener noreferrer"
                         />
                       ),
-                      p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                      p: ({ children }) => (
+                        <p className="mb-2 last:mb-0">{children}</p>
+                      ),
                     }}
                   >
                     {msg.text}
