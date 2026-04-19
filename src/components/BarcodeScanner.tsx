@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { BrowserMultiFormatReader, NotFoundException } from "@zxing/browser";
+import { BrowserMultiFormatReader } from "@zxing/browser";
 
 interface NutritionResult {
   name: string;
@@ -54,7 +54,7 @@ export default function BarcodeScanner({ onResult, onClose }: BarcodeScannerProp
           setStatus("error");
         }
       }
-      if (err && !(err instanceof NotFoundException)) {
+      if (err && (err as any).name !== "NotFoundException") {
         // 忽略找不到條碼的錯誤（正常掃描中會一直出現）
       }
     });
