@@ -1,6 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { gemini, GEMINI_MODEL, GEMINI_FALLBACK_MODEL } from "@/lib/gemini";
-import { SYSTEM_PROMPT } from "@/lib/prompts";
+import {
+  SYSTEM_PREFIX,
+  ALL_INTENTS,
+  buildIntentClassifierPrompt,
+  buildSafetyCheckPrompt,
+  buildReviseReplyPrompt,
+  buildGeneralChatPrompt,
+  buildEmotionalSupportPrompt,
+  buildEmotionalEatingPrompt,
+  buildMealLoggingPrompt,
+  buildPlanRequestPrompt,
+  buildRestaurantNoResultsPrompt,
+  buildRestaurantCardsPrompt,
+  buildCompensationPlanPrompt,
+  EVENING_CHECKIN_HINT,
+  isEveningHour,
+  formatSummaryAsContext,
+  type Intent,
+  type SafetyResult,
+  type SafetyRisk,
+  type CompensationPlan,
+  type DailySummary,
+} from "@/lib/prompts";
+import { supabase } from "@/lib/server/supabase";
 
 type HistoryMessage = {
   role: "user" | "assistant";
@@ -8,9 +31,34 @@ type HistoryMessage = {
 };
 
 type IntentResult = {
-  intent: "emotional_support" | "general_chat" | "restaurant_search";
+  intent: Intent;
   reason: string;
 };
+
+type Place = {
+  name: string;
+  address?: string;
+  openNow?: boolean;
+  rating?: number;
+  googleMapsLink: string;
+  types?: string[];
+};
+
+type RestaurantCards = Record<string, unknown>;
+
+function errorMessage(err: unknown): string {
+  if (err && typeof err === "object" && "message" in err) {
+    return String((err as { message?: unknown }).message ?? "");
+  }
+  return String(err ?? "");
+}
+
+function isRetryable(err: unknown): boolean {
+  const msg = errorMessage(err);
+  return /503|UNAVAILABLE|429|RESOURCE_EXHAUSTED/.test(msg);
+}
+
+// ---------- Gemini helpers ----------
 
 async function generateText(model: string, prompt: string) {
   const result = await gemini.models.generateContent({
@@ -20,25 +68,27 @@ async function generateText(model: string, prompt: string) {
   return result.text ?? "";
 }
 
-async function generateTextWithFallback(prompt: string) {
+async function generateTextWithFallback(prompt: string): Promise<string | null> {
   try {
     return await generateText(GEMINI_MODEL, prompt);
-  } catch (error: any) {
-    const msg = String(error?.message || "");
-    const retryable =
-      msg.includes("503") || msg.includes("UNAVAILABLE") ||
-      msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED");
-    if (!retryable) throw error;
+  } catch (error: unknown) {
+    if (!isRetryable(error)) throw error;
     try {
       return await generateText(GEMINI_FALLBACK_MODEL, prompt);
-    } catch (fallbackError: any) {
-      const fallbackMsg = String(fallbackError?.message || "");
-      const fallbackRetryable =
-        fallbackMsg.includes("503") || fallbackMsg.includes("UNAVAILABLE") ||
-        fallbackMsg.includes("429") || fallbackMsg.includes("RESOURCE_EXHAUSTED");
-      if (fallbackRetryable) return null;
+    } catch (fallbackError: unknown) {
+      if (isRetryable(fallbackError)) return null;
       throw fallbackError;
     }
+  }
+}
+
+function tryParseJson<T>(text: string | null): T | null {
+  if (!text) return null;
+  try {
+    const cleaned = text.replace(/```json|```/g, "").trim();
+    return JSON.parse(cleaned) as T;
+  } catch {
+    return null;
   }
 }
 
@@ -53,55 +103,130 @@ function splitParts(text: string) {
   return text.split(/\n+/).map((s) => s.trim()).filter(Boolean).map((s) => ({ text: s }));
 }
 
+// ---------- Intent classifier (expanded to 6 intents) ----------
+
 async function classifyIntent(message: string, history: HistoryMessage[] = []): Promise<IntentResult> {
   const historyText = formatHistory(history);
-  const prompt = `
-你是一個對話意圖分類器。
-請根據使用者最新訊息與對話上下文，判斷這句話的主要意圖。
-
-分類只能是以下其中一個：
-- emotional_support
-- general_chat
-- restaurant_search
-
-判斷原則：
-1. 如果使用者在表達疲累、壓力、罪惡感、自責、矛盾、低落、需要被理解，優先判定為 emotional_support。
-2. 如果只是寒暄、追問、澄清、延續聊天，例如「嗨」「為什麼這麼說」「原來如此」，判定為 general_chat。
-3. 只有在使用者明確表示要你幫忙找附近店家、推薦吃什麼、搜尋餐廳、查看還有開的選擇時，才判定為 restaurant_search。
-4. 只提到食物，不代表要找餐廳。
-5. 像「我今天吃了炸雞好罪惡」應該是 emotional_support，不是 restaurant_search。
-6. 像「我沒有要叫你找餐廳」應該不是 restaurant_search。
-
-請只輸出 JSON，格式如下：
-{"intent":"emotional_support | general_chat | restaurant_search","reason":"簡短中文原因，不超過30字"}
-
-對話上下文：
-${historyText || "（無）"}
-
-使用者最新訊息：
-${message}
-`;
+  const prompt = buildIntentClassifierPrompt({ message, historyText });
   const text = await generateTextWithFallback(prompt);
   if (text === null) return { intent: "general_chat", reason: "模型忙碌，先當一般聊天" };
-  try {
-    const cleaned = text.replace(/```json|```/g, "").trim();
-    const parsed = JSON.parse(cleaned);
-    if (parsed.intent === "emotional_support" || parsed.intent === "general_chat" || parsed.intent === "restaurant_search") {
-      return { intent: parsed.intent, reason: parsed.reason || "已完成分類" };
-    }
-  } catch {}
+
+  const parsed = tryParseJson<{ intent: string; reason: string }>(text);
+  if (parsed && ALL_INTENTS.includes(parsed.intent as Intent)) {
+    return { intent: parsed.intent as Intent, reason: parsed.reason || "已完成分類" };
+  }
   return { intent: "general_chat", reason: "分類失敗，先當一般聊天" };
 }
 
+// ---------- Safety revision layer ----------
+
+async function runSafetyCheck(reply: string): Promise<SafetyResult> {
+  const prompt = buildSafetyCheckPrompt(reply);
+  const text = await generateTextWithFallback(prompt);
+  const parsed = tryParseJson<SafetyResult>(text);
+  if (!parsed || typeof parsed.safe !== "boolean") {
+    // 寧可放行也不要阻擋使用者，但記錄一下
+    return { safe: true, risks: [], reason: "safety check 解析失敗，預設放行" };
+  }
+  return parsed;
+}
+
+async function reviseReply(params: {
+  original: string;
+  risks: SafetyRisk[];
+  historyText: string;
+}): Promise<string> {
+  const prompt = buildReviseReplyPrompt(params);
+  const text = await generateTextWithFallback(prompt);
+  return text?.trim() || "這個請求我可能沒辦法幫上忙，你願意的話可以跟營養師或醫師聊聊，我會在這邊陪你。";
+}
+
+/**
+ * 在回傳給使用者前，對純文字回覆做一次 safety 檢查與改寫。
+ * JSON 輸出（restaurant cards / compensation plan）不走這條。
+ */
+async function withSafety(reply: string, historyText: string): Promise<{
+  text: string;
+  safety: SafetyResult;
+}> {
+  const safety = await runSafetyCheck(reply);
+  if (safety.safe) return { text: reply, safety };
+  const revised = await reviseReply({ original: reply, risks: safety.risks, historyText });
+  return { text: revised, safety };
+}
+
+// ---------- Summary memory ----------
+
+async function fetchLatestSummary(userId: string | undefined): Promise<DailySummary | null> {
+  if (!userId) return null;
+  try {
+    const { data, error } = await supabase
+      .from("chat_summaries")
+      .select("summary_json")
+      .eq("user_id", userId)
+      .order("date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data?.summary_json) return null;
+    return data.summary_json as DailySummary;
+  } catch {
+    // chat_summaries 表可能還不存在 — 不要讓聊天壞掉
+    return null;
+  }
+}
+
+// ---------- Compensation plan generator ----------
+
+async function generateCompensationPlan(params: {
+  historyText: string;
+  message: string;
+  todayContext?: string;
+  startDateLabel: string;
+}): Promise<CompensationPlan | null> {
+  const prompt = buildCompensationPlanPrompt(params);
+  const text = await generateTextWithFallback(prompt);
+  return tryParseJson<CompensationPlan>(text);
+}
+
+function formatDateLabel(clientTime?: string): string {
+  const base = clientTime ? new Date(clientTime) : new Date();
+  const tomorrow = new Date(base);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const m = tomorrow.getMonth() + 1;
+  const d = tomorrow.getDate();
+  return `${m}/${d}`;
+}
+
+// ---------- Main handler ----------
+
 export async function POST(req: NextRequest) {
   try {
-    const { message, lat, lng, history = [] } = await req.json();
+    const {
+      message,
+      lat,
+      lng,
+      history = [],
+      clientTime,
+      userId,
+    } = await req.json();
+
     const historyText = formatHistory(history);
     const intentResult = await classifyIntent(message, history);
     const intent = intentResult.intent;
 
+    // 拉昨日摘要（非同步但我們等它，因為要塞進 prompt）
+    const latestSummary = await fetchLatestSummary(userId);
+    const summaryContext = formatSummaryAsContext(latestSummary);
+
+    // 晚間提醒（只在 general_chat / emotional_support 時加）
+    const evening = isEveningHour(clientTime);
+    const eveningHint = evening ? EVENING_CHECKIN_HINT : "";
+
+    const prefix = [SYSTEM_PREFIX, summaryContext].filter(Boolean).join("\n\n");
+
+    // ===== restaurant_search =====
     if (intent === "restaurant_search") {
-      let places: any[] = [];
+      let places: Place[] = [];
 
       if (lat && lng) {
         const restaurantRes = await fetch(`${req.nextUrl.origin}/api/restaurants`, {
@@ -109,81 +234,34 @@ export async function POST(req: NextRequest) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ query: message, lat, lng }),
         });
-        const restaurantData = await restaurantRes.json();
+        const restaurantData = (await restaurantRes.json()) as { places?: Place[] };
         places = restaurantData.places ?? [];
       }
 
       if (!places.length) {
-        const prompt = `
-${SYSTEM_PROMPT}
-對話紀錄：${historyText || "（無）"}
-使用者最新訊息：${message}
-情境：使用者想找餐廳，但目前沒有順利查到附近店家資料。
-請用繁體中文，回覆兩小段：1. 先自然回應 2. 溫和說明沒找到，建議換關鍵字或稍後再試。不要太長。
-`;
+        const prompt = `${prefix}\n\n${buildRestaurantNoResultsPrompt({ historyText, message })}`;
         const text = await generateTextWithFallback(prompt);
         if (text === null) {
-          return NextResponse.json({ parts: [{ text: "我有幫你找找看。" }, { text: "但這次沒有順利抓到附近店家，你可以換個更明確的餐點名稱再試一次。" }], meta: { intent, reason: intentResult.reason } });
+          return NextResponse.json({
+            parts: [
+              { text: "我有幫你找找看。" },
+              { text: "但這次沒有順利抓到附近店家，你可以換個更明確的餐點名稱再試一次。" },
+            ],
+            meta: { intent, reason: intentResult.reason },
+          });
         }
-        return NextResponse.json({ parts: splitParts(text), meta: { intent, reason: intentResult.reason } });
+        const { text: safeText, safety } = await withSafety(text, historyText);
+        return NextResponse.json({
+          parts: splitParts(safeText),
+          meta: { intent, reason: intentResult.reason, safety },
+        });
       }
 
-      const restaurantSummary = places.slice(0, 5).map((p: any, i: number) =>
+      const restaurantSummary = places.slice(0, 5).map((p, i) =>
         `${i + 1}. 店名：${p.name}｜地址：${p.address ?? ""}｜評分：${p.rating ?? "N/A"}｜${p.openNow ? "營業中" : "營業狀態未確認"}｜類型：${p.types?.join(",") ?? ""}｜Google Maps：${p.googleMapsLink}`
       ).join("\n");
 
-      const prompt = `
-${SYSTEM_PROMPT}
-
-你是一個以情緒支持為主，但具備找餐廳能力的聊天助理。
-
-對話紀錄：
-${historyText || "（無）"}
-
-使用者最新訊息：
-${message}
-
-找到的店家（包含便利商店）：
-${restaurantSummary}
-
-請輸出一個 JSON 物件，格式如下，不要有任何其他文字或 markdown：
-{
-  "intro": "一句自然的開場白",
-  "budget_tip": "想省錢可以考慮哪間或哪個選擇（一句話）",
-  "special_tip": "想吃特別的可以去哪間（一句話）",
-  "restaurants": [
-    {
-      "name": "店名",
-      "mapsUrl": "Google Maps 連結",
-      "rating": 4.2,
-      "isOpen": true,
-      "walkingMinutes": 估算步行分鐘數(數字),
-      "recommendations": [
-        {
-          "item": "推薦餐點名稱（要具體，便利商店要給真實商品名）",
-          "calories": 估算卡路里數字,
-          "protein": 估算蛋白質公克數字,
-          "fat": 估算脂肪公克數字,
-          "carbs": 估算碳水公克數字,
-          "price": 估算價格數字
-        }
-      ]
-    }
-  ]
-}
-
-規則：
-- 只保留真正可以用餐的地方：餐廳、小吃店、便利商店、早餐店、麵包店、咖啡廳
-- 排除以下類型：藥局、飲料手搖店（非用餐）、保健品店、藥妝店、超市、百貨、服飾、電器、診所
-- 如果店名明顯是飲料品牌（龍角散、維他露、寶礦力等）或非食物店，直接跳過不要列入
-- 每間店給 1~2 個推薦餐點
-- 便利商店（7-11、全家、萊爾富、OK）要給真實商品名稱和盡量準確的營養數據
-- walkingMinutes 根據地址估算，每 500 公尺約 4 分鐘，如果無法判斷就給 5
-- 營養數字請合理估算，便利商店商品盡量準確
-- 價格單位是台幣，便利商店商品給真實售價
-- 只輸出 JSON，不要任何說明文字
-`;
-
+      const prompt = `${prefix}\n\n${buildRestaurantCardsPrompt({ historyText, message, restaurantSummary })}`;
       const text = await generateTextWithFallback(prompt);
 
       if (text === null) {
@@ -193,46 +271,112 @@ ${restaurantSummary}
         });
       }
 
-      // 嘗試解析 JSON，成功就回傳 restaurantCards 格式
-      try {
-        const cleaned = text.replace(/```json|```/g, "").trim();
-        const parsed = JSON.parse(cleaned);
+      const parsed = tryParseJson<RestaurantCards>(text);
+      if (parsed) {
         return NextResponse.json({
           restaurantCards: parsed,
           meta: { intent, reason: intentResult.reason },
         });
-      } catch {
-        // JSON 解析失敗就回傳純文字
+      }
+
+      const { text: safeText, safety } = await withSafety(text, historyText);
+      return NextResponse.json({
+        parts: splitParts(safeText),
+        meta: { intent, reason: intentResult.reason, safety },
+      });
+    }
+
+    // ===== emotional_eating / plan_request — 生成三天補償餐單 =====
+    if (intent === "emotional_eating" || intent === "plan_request") {
+      const startDateLabel = formatDateLabel(clientTime);
+      const todayContext = latestSummary
+        ? `根據昨日摘要：${latestSummary.meals.map(m => m.description).join(", ")}`
+        : undefined;
+
+      const plan = await generateCompensationPlan({
+        historyText,
+        message,
+        todayContext,
+        startDateLabel,
+      });
+
+      const planJson = plan ? JSON.stringify(plan) : undefined;
+
+      const textPrompt = intent === "emotional_eating"
+        ? `${prefix}\n\n${buildEmotionalEatingPrompt({
+            historyText,
+            message,
+            intentReason: intentResult.reason,
+            compensationPlanJson: planJson,
+          })}`
+        : `${prefix}\n\n${buildPlanRequestPrompt({
+            historyText,
+            message,
+            compensationPlanJson: planJson,
+          })}`;
+
+      const text = await generateTextWithFallback(textPrompt);
+      if (text === null) {
         return NextResponse.json({
-          parts: splitParts(text),
+          parts: [{ text: "我在，先幫你排了接下來三天的餐單，慢慢調回來就好。" }],
+          compensationPlan: plan ?? undefined,
           meta: { intent, reason: intentResult.reason },
         });
       }
+
+      const { text: safeText, safety } = await withSafety(text, historyText);
+      return NextResponse.json({
+        parts: splitParts(safeText),
+        compensationPlan: plan ?? undefined,
+        meta: { intent, reason: intentResult.reason, safety },
+      });
     }
 
-    // 情緒支持 / 一般聊天
-    const prompt = `
-${SYSTEM_PROMPT}
-你是一個以情緒支持為主的聊天助理。
-找餐廳只是附加功能，除非使用者明確要求，否則不要主動進入找餐廳模式。
+    // ===== meal_logging =====
+    if (intent === "meal_logging") {
+      const prompt = `${prefix}\n\n${buildMealLoggingPrompt({ historyText, message })}`;
+      const text = await generateTextWithFallback(prompt);
+      if (text === null) {
+        return NextResponse.json({
+          parts: [{ text: "收到，幫你記下來了。" }, { text: "之後可以再聊一下心情。" }],
+          meta: { intent, reason: intentResult.reason },
+        });
+      }
+      const { text: safeText, safety } = await withSafety(text, historyText);
+      return NextResponse.json({
+        parts: splitParts(safeText),
+        meta: { intent, reason: intentResult.reason, safety },
+      });
+    }
 
-對話紀錄：
-${historyText || "（無）"}
+    // ===== emotional_support =====
+    if (intent === "emotional_support") {
+      const prompt = `${prefix}\n\n${buildEmotionalSupportPrompt({
+        historyText,
+        message,
+        intentReason: intentResult.reason,
+      })}`;
+      const text = await generateTextWithFallback(prompt);
+      if (text === null) {
+        return NextResponse.json({
+          parts: [{ text: "我在。" }, { text: "你可以慢慢說，我有在看你剛剛講的內容。" }],
+          meta: { intent, reason: intentResult.reason },
+        });
+      }
+      const { text: safeText, safety } = await withSafety(text, historyText);
+      return NextResponse.json({
+        parts: splitParts(safeText),
+        meta: { intent, reason: intentResult.reason, safety },
+      });
+    }
 
-使用者最新訊息：
-${message}
-
-模型判定這句主要意圖是：${intent}
-原因：${intentResult.reason}
-
-請用繁體中文自然回覆：
-1. 如果是 emotional_support，先同理，再接住情緒，不要急著給解法
-2. 如果是 general_chat，就自然延續上下文，不要重複前一句
-3. 如果使用者提到食物，但沒有要求找餐廳，不要幫他找店
-4. 回覆分成 1~2 小段，不要太長
-5. 避免太像客服或制式心理諮商口吻
-`;
-
+    // ===== general_chat (預設) =====
+    const prompt = `${prefix}\n\n${buildGeneralChatPrompt({
+      historyText,
+      message,
+      intentReason: intentResult.reason,
+      eveningHint,
+    })}`;
     const text = await generateTextWithFallback(prompt);
     if (text === null) {
       return NextResponse.json({
@@ -240,9 +384,13 @@ ${message}
         meta: { intent, reason: intentResult.reason },
       });
     }
-    return NextResponse.json({ parts: splitParts(text), meta: { intent, reason: intentResult.reason } });
+    const { text: safeText, safety } = await withSafety(text, historyText);
+    return NextResponse.json({
+      parts: splitParts(safeText),
+      meta: { intent, reason: intentResult.reason, safety },
+    });
 
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message ?? "Chat error" }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: errorMessage(error) || "Chat error" }, { status: 500 });
   }
 }
