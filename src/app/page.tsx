@@ -453,31 +453,60 @@ export default function HomePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: userText, lat: latRef.current, lng: lngRef.current, history: historyToSend, dietContext }),
       });
-        const data = await res.json();
 
-      if (data.restaurantCards) {
-        addMessage("assistant", "", { restaurantCards: data.restaurantCards });
-      } else if (data.foodRecommendation) {
-        addMessage("assistant", "", { foodRecommendation: data.foodRecommendation });
-      } else if (data.drinkRecommendation) {
-        addMessage("assistant", "", { drinkRecommendation: data.drinkRecommendation });
-      } else if (data.parts && Array.isArray(data.parts)) {
-        for (const part of data.parts) {
-          if (part?.text) addMessage("assistant", part.text);
+      const contentType = res.headers.get("Content-Type") ?? "";
+
+      // JSON 回應（餐廳、食物、飲料推薦）
+      if (contentType.includes("application/json")) {
+        const data = await res.json();
+        if (data.restaurantCards) {
+          addMessage("assistant", "", { restaurantCards: data.restaurantCards });
+        } else if (data.foodRecommendation) {
+          addMessage("assistant", "", { foodRecommendation: data.foodRecommendation });
+        } else if (data.drinkRecommendation) {
+          addMessage("assistant", "", { drinkRecommendation: data.drinkRecommendation });
+        } else if (data.parts && Array.isArray(data.parts)) {
+          for (const part of data.parts) {
+            if (part?.text) addMessage("assistant", part.text);
+          }
+        } else if (data.error) {
+          addMessage("assistant", `發生錯誤：${data.error}`);
+        } else {
+          addMessage("assistant", "我剛剛沒有順利回覆耶。");
         }
-      } else if (data.reply) {
-        addMessage("assistant", data.reply);
-      } else if (data.error) {
-        addMessage("assistant", `發生錯誤：${data.error}`);
-      } else {
-        addMessage("assistant", "我剛剛沒有順利回覆耶。");
+        return;
       }
+
+      // Streaming 回應（一般聊天、情緒支持）
+      if (!res.body) { addMessage("assistant", "我剛剛沒有順利回覆耶。"); return; }
+
+      const streamId = crypto.randomUUID();
+      setMessages((prev) => [...prev, { id: streamId, role: "assistant" as const, text: "" }]);
+      setLoading(false);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulated = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        accumulated += chunk;
+        const current = accumulated;
+        setMessages((prev) =>
+          prev.map((m) => m.id === streamId ? { ...m, text: current } : m)
+        );
+        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 10);
+      }
+
     } catch {
       addMessage("assistant", "剛剛出了點問題，你可以再試一次。");
     } finally {
       setLoading(false);
     }
   };
+
 
   const uploadImage = async (file: File) => {
     const formData = new FormData();
