@@ -61,6 +61,22 @@ export async function POST(req: NextRequest) {
       convenienceRes.json(),
     ]);
 
+    const NON_FOOD_TYPES = [
+      "pharmacy", "drugstore", "hospital", "doctor", "clothing_store",
+      "electronics_store", "department_store", "supermarket", "furniture_store",
+      "hardware_store", "gym", "beauty_salon", "bank", "atm",
+    ];
+
+    const isRealFoodPlace = (p: any) => {
+      const types: string[] = p.types ?? [];
+      const name: string = p.displayName?.text ?? "";
+      if (types.some((t: string) => NON_FOOD_TYPES.includes(t))) return false;
+      // 排除明顯非食物店名
+      const NON_FOOD_KEYWORDS = ["藥局", "藥妝", "診所", "醫院", "銀行", "保險", "眼鏡", "手機", "電信", "龍角散", "藥品"];
+      if (NON_FOOD_KEYWORDS.some((kw) => name.includes(kw))) return false;
+      return true;
+    };
+
     const formatPlace = (p: any) => ({
       id: p.id,
       name: p.displayName?.text ?? "未命名店家",
@@ -77,8 +93,8 @@ export async function POST(req: NextRequest) {
         (p.displayName?.text ?? "").includes("OK"),
     });
 
-    const restaurants = (restaurantData.places || []).map(formatPlace);
-    const conveniences = (convenienceData.places || []).map(formatPlace);
+    const restaurants = (restaurantData.places || []).map(formatPlace).filter(isRealFoodPlace);
+    const conveniences = (convenienceData.places || []).map(formatPlace).filter(isRealFoodPlace);
 
     // 合併，便利商店放前面
     const places = [...conveniences, ...restaurants].slice(0, 6);
