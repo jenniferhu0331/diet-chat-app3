@@ -245,20 +245,10 @@ ${restaurantSummary}
 請用繁體中文回覆，規則：
 1. 先一句自然短回覆
 2. 再一句簡短推薦
-3. 列出 2~4 間店，每間格式如下：
-
-**店名**
-🚶 步行約 X 分鐘（根據地址與使用者位置估算，每500公尺約4分鐘）
-⭐ 評分｜營業狀態
-🥗 健康推薦點法：列出 1~2 種這間店適合的健康餐點組合（例如：烤雞腿+沙拉、豆漿+蛋餅）
-🔥 估計熱量：XXX kcal｜蛋白質 XXg｜脂肪 XXg｜碳水 XXg
-💰 估計價位：XX~XX 元
-<a href="對應連結" target="_blank" rel="noopener noreferrer">在 Google Maps 開啟</a>
-
-4. 營養數字請根據餐廳類型與台灣飲食習慣合理估算
-5. 價位請根據台灣一般行情估算
-6. 步行時間請根據店家地址與使用者大概位置估算，若無法判斷就寫「步行約 5~10 分鐘」
-7. 語氣自然，不要像報表
+3. 最後列出 2~4 間店，每間都附這句超連結文字：
+   <a href="對應連結" target="_blank" rel="noopener noreferrer">在 Google Maps 開啟</a>
+4. 不要過長
+5. 不要像冷冰冰的表格
 `;
 
       const text = await generateTextWithFallback(prompt);
