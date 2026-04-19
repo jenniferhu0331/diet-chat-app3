@@ -11,6 +11,7 @@ import {
   getTodaySummary,
   DailySummary,
 } from "@/lib/foodStore";
+import BarcodeScanner from "@/components/BarcodeScanner";
 
 const GOAL_KEY = "diet-kcal-goal";
 const DEFAULT_GOAL = 2000;
@@ -36,19 +37,10 @@ function GoalEditor({ goal, onSave }: { goal: number; onSave: (v: number) => voi
   if (editing) {
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <input
-          ref={inputRef}
-          type="number"
-          value={val}
+        <input ref={inputRef} type="number" value={val}
           onChange={(e) => setVal(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") confirm(); if (e.key === "Escape") setEditing(false); }}
-          style={{
-            width: 80, padding: "4px 8px", borderRadius: 10,
-            border: "0.5px solid rgba(122,90,154,0.4)",
-            background: "rgba(255,255,255,0.8)",
-            fontFamily: "inherit", fontSize: 14, color: "#3d2e3d", outline: "none",
-          }}
-        />
+          style={{ width: 80, padding: "4px 8px", borderRadius: 10, border: "0.5px solid rgba(122,90,154,0.4)", background: "rgba(255,255,255,0.8)", fontFamily: "inherit", fontSize: 14, color: "#3d2e3d", outline: "none" }} />
         <button onClick={confirm} style={{ fontSize: 12, color: "#7a5a9a", background: "none", border: "none", cursor: "pointer" }}>確定</button>
       </div>
     );
@@ -77,6 +69,7 @@ function AddModal({ onClose, onAdd }: AddModalProps) {
   const [fat, setFat] = useState("");
   const [carbs, setCarbs] = useState("");
   const [estimating, setEstimating] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -120,58 +113,89 @@ function AddModal({ onClose, onAdd }: AddModalProps) {
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-handle" />
-        <p className="modal-title">新增食物</p>
+    <>
+      <div className="modal-backdrop" onClick={onClose}>
+        <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-handle" />
+          <p className="modal-title">新增食物</p>
 
-        <label className="field-label">食物名稱</label>
-        <div style={{ display: "flex", gap: 8 }}>
-          <input ref={nameRef} className="field-input" style={{ flex: 1 }}
-            placeholder="例：滷肉飯、珍珠奶茶"
-            value={name} onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submit()} />
-          <button onClick={estimate} disabled={!name.trim() || estimating}
-            style={{
-              padding: "0 14px", borderRadius: 12,
-              background: "rgba(122,90,154,0.1)",
-              border: "0.5px solid rgba(122,90,154,0.2)",
-              color: "#7a5a9a", fontSize: 12, cursor: "pointer",
-              whiteSpace: "nowrap", fontFamily: "inherit",
-            }}>
-            {estimating ? "估算中…" : "AI 估算"}
-          </button>
-        </div>
+          <label className="field-label">食物名稱</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input ref={nameRef} className="field-input" style={{ flex: 1 }}
+              placeholder="例：滷肉飯、珍珠奶茶"
+              value={name} onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submit()} />
+          </div>
 
-        <label className="field-label">餐別</label>
-        <div className="meal-pills">
-          {MEALS.map((m) => (
-            <button key={m} className={`meal-pill${meal === m ? " active" : ""}`} onClick={() => setMeal(m)}>
-              {MEAL_EMOJI[m]} {m}
+          {/* 按鈕列 */}
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <button onClick={() => setShowScanner(true)}
+              style={{
+                flex: 1, padding: "9px 0", borderRadius: 12,
+                background: "rgba(96,184,240,0.1)",
+                border: "0.5px solid rgba(96,184,240,0.3)",
+                color: "#4090b8", fontSize: 12, cursor: "pointer",
+                fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+              }}>
+              📷 掃描條碼
             </button>
-          ))}
-        </div>
+            <button onClick={estimate} disabled={!name.trim() || estimating}
+              style={{
+                flex: 1, padding: "9px 0", borderRadius: 12,
+                background: "rgba(122,90,154,0.1)",
+                border: "0.5px solid rgba(122,90,154,0.2)",
+                color: "#7a5a9a", fontSize: 12, cursor: "pointer",
+                fontFamily: "inherit",
+              }}>
+              {estimating ? "估算中…" : "✨ AI 估算"}
+            </button>
+          </div>
 
-        <label className="field-label">營養資訊（可用 AI 估算自動填入）</label>
-        <div className="macro-row">
-          {[
-            { label: "熱量 kcal", val: calories, set: setCalories },
-            { label: "蛋白質 g", val: protein, set: setProtein },
-            { label: "脂肪 g", val: fat, set: setFat },
-            { label: "碳水 g", val: carbs, set: setCarbs },
-          ].map(({ label, val, set }) => (
-            <div key={label} className="macro-field">
-              <span className="macro-label">{label}</span>
-              <input className="macro-input" type="number" min="0" placeholder="—"
-                value={val} onChange={(e) => set(e.target.value)} />
-            </div>
-          ))}
-        </div>
+          <label className="field-label">餐別</label>
+          <div className="meal-pills">
+            {MEALS.map((m) => (
+              <button key={m} className={`meal-pill${meal === m ? " active" : ""}`} onClick={() => setMeal(m)}>
+                {MEAL_EMOJI[m]} {m}
+              </button>
+            ))}
+          </div>
 
-        <button className="btn-primary" onClick={submit} disabled={!name.trim()}>記錄下來</button>
-        <button className="btn-ghost" onClick={onClose}>取消</button>
+          <label className="field-label">營養資訊</label>
+          <div className="macro-row">
+            {[
+              { label: "熱量 kcal", val: calories, set: setCalories },
+              { label: "蛋白質 g", val: protein, set: setProtein },
+              { label: "脂肪 g", val: fat, set: setFat },
+              { label: "碳水 g", val: carbs, set: setCarbs },
+            ].map(({ label, val, set }) => (
+              <div key={label} className="macro-field">
+                <span className="macro-label">{label}</span>
+                <input className="macro-input" type="number" min="0" placeholder="—"
+                  value={val} onChange={(e) => set(e.target.value)} />
+              </div>
+            ))}
+          </div>
+
+          <button className="btn-primary" onClick={submit} disabled={!name.trim()}>記錄下來</button>
+          <button className="btn-ghost" onClick={onClose}>取消</button>
+        </div>
       </div>
-    </div>
+
+      {/* 條碼掃描器 */}
+      {showScanner && (
+        <BarcodeScanner
+          onClose={() => setShowScanner(false)}
+          onResult={(result) => {
+            setName(result.name);
+            setCalories(String(result.calories));
+            setProtein(String(result.protein));
+            setFat(String(result.fat));
+            setCarbs(String(result.carbs));
+            setShowScanner(false);
+          }}
+        />
+      )}
+    </>
   );
 }
 
@@ -296,7 +320,6 @@ export default function DiaryPage() {
         .kcal-num { font-family: 'DM Serif Display', serif; font-size: 36px; color: #7a5a9a; }
         .kcal-label { font-size: 13px; color: #a090b0; }
         .kcal-remain { font-size: 12px; color: #a090b0; }
-        /* Progress bar */
         .progress-track { height: 6px; background: #f0ebe8; border-radius: 3px; margin-bottom: 16px; overflow: hidden; }
         .progress-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #9a7ad8, #c0a0e8); transition: width 0.6s ease; }
         .progress-fill.over { background: linear-gradient(90deg, #e88060, #f0a080); }
@@ -394,13 +417,10 @@ export default function DiaryPage() {
                 </span>
               </div>
             </div>
-
-            {/* Progress bar */}
             <div className="progress-track">
               <div className={`progress-fill${summary.totalCalories > goal ? " over" : ""}`}
                 style={{ width: `${Math.round(kcalPct * 100)}%` }} />
             </div>
-
             <div className="rings">
               <MacroRing label="蛋白質" value={summary.totalProtein} unit="g" color="#9a7ad8" max={60} />
               <MacroRing label="脂肪"   value={summary.totalFat}     unit="g" color="#f0a060" max={65} />
