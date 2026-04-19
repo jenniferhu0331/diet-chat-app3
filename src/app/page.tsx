@@ -6,12 +6,15 @@ import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import { addFoodEntry } from "@/lib/foodStore";
 
+// ── Types ─────────────────────────────────────────────────────────────────────
 type Message = {
   id: string;
   role: "user" | "assistant";
   text: string;
   detectedFoods?: string[];
   restaurantCards?: RestaurantCardsData;
+  foodRecommendation?: FoodRecommendationData;
+  drinkRecommendation?: DrinkRecommendationData;
 };
 
 type RestaurantRecommendation = {
@@ -37,6 +40,44 @@ type RestaurantCardsData = {
   budget_tip: string;
   special_tip: string;
   restaurants: RestaurantCard[];
+};
+
+type FoodItem = {
+  name: string;
+  description: string;
+  calories: number;
+  protein: number;
+  fat: number;
+  carbs: number;
+  price: number;
+};
+
+type FoodRecommendationData = {
+  intro: string;
+  items: FoodItem[];
+};
+
+type DrinkItem = {
+  name: string;
+  size: string;
+  sugar: string;
+  ice: string;
+  calories: number;
+  price: number;
+};
+
+type DrinkShop = {
+  name: string;
+  mapsUrl: string;
+  isOpen: boolean;
+  walkingMinutes: number;
+  items: DrinkItem[];
+};
+
+type DrinkRecommendationData = {
+  intro: string;
+  shops: DrinkShop[];
+  healthy_tip: string;
 };
 
 const MESSAGES_KEY = "diet-chat-messages";
@@ -83,6 +124,35 @@ function detectFoodsInMessage(text: string): string[] {
   return [...found];
 }
 
+// ── Shared save button style helper ──────────────────────────────────────────
+function SaveBtn({ saved, saving, onClick }: { saved: boolean; saving: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} disabled={saved || saving} style={{
+      padding: "3px 10px", borderRadius: 14, fontSize: 11,
+      border: "0.5px solid rgba(122,90,154,0.3)",
+      background: saved ? "rgba(122,90,154,0.1)" : "rgba(255,255,255,0.8)",
+      color: saved ? "#b0a0c8" : "#7a5a9a",
+      cursor: saved || saving ? "default" : "pointer",
+      fontFamily: "inherit", transition: "all 0.15s", whiteSpace: "nowrap" as const,
+    }}>
+      {saved ? "✓ 已記錄" : saving ? "記錄中…" : "+ 記錄"}
+    </button>
+  );
+}
+
+function NutritionRow({ calories, protein, fat, carbs, price }: { calories: number; protein: number; fat: number; carbs: number; price?: number }) {
+  return (
+    <div style={{ display: "flex", gap: 8, fontSize: 11, color: "#a090b0", flexWrap: "wrap" as const }}>
+      <span>🔥 {calories} kcal</span>
+      <span>蛋白 {protein}g</span>
+      <span>脂 {fat}g</span>
+      <span>碳 {carbs}g</span>
+      {price ? <span>💰 約 {price} 元</span> : null}
+    </div>
+  );
+}
+
+// ── FoodChips ─────────────────────────────────────────────────────────────────
 function FoodChips({ foods, onSave }: { foods: string[]; onSave: (f: string) => Promise<void> }) {
   const [saved, setSaved] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState<Set<string>>(new Set());
@@ -98,22 +168,125 @@ function FoodChips({ foods, onSave }: { foods: string[]; onSave: (f: string) => 
   return (
     <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 6 }}>
       {foods.map((f) => (
-        <button key={f} onClick={() => save(f)} disabled={saved.has(f) || saving.has(f)}
-          style={{
-            padding: "4px 12px", borderRadius: 20,
-            border: "0.5px solid rgba(200,180,220,0.6)",
-            background: saved.has(f) ? "rgba(122,90,154,0.1)" : "rgba(255,255,255,0.7)",
-            backdropFilter: "blur(10px)",
-            color: saved.has(f) ? "#b0a0c8" : "#7a5a9a",
-            fontSize: 12,
-            cursor: (saved.has(f) || saving.has(f)) ? "default" : "pointer",
-            fontFamily: "inherit", transition: "all 0.15s",
-          }}>
+        <button key={f} onClick={() => save(f)} disabled={saved.has(f) || saving.has(f)} style={{
+          padding: "4px 12px", borderRadius: 20,
+          border: "0.5px solid rgba(200,180,220,0.6)",
+          background: saved.has(f) ? "rgba(122,90,154,0.1)" : "rgba(255,255,255,0.7)",
+          backdropFilter: "blur(10px)",
+          color: saved.has(f) ? "#b0a0c8" : "#7a5a9a",
+          fontSize: 12, cursor: (saved.has(f) || saving.has(f)) ? "default" : "pointer",
+          fontFamily: "inherit", transition: "all 0.15s",
+        }}>
           {saved.has(f) ? "✓" : saving.has(f) ? "估算中…" : "+"} {f}
         </button>
       ))}
       {foods.some((f) => !saved.has(f) && !saving.has(f)) && (
         <span style={{ fontSize: 10, color: "#c0b0c8" }}>點擊記錄到日記</span>
+      )}
+    </div>
+  );
+}
+
+// ── Food Recommendation Cards ─────────────────────────────────────────────────
+function FoodRecommendationCards({ data, onSave }: { data: FoodRecommendationData; onSave: (item: FoodItem) => Promise<void> }) {
+  const [saved, setSaved] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState<Set<string>>(new Set());
+
+  async function save(item: FoodItem) {
+    setSaving((s) => new Set(s).add(item.name));
+    await onSave(item);
+    setSaving((s) => { const n = new Set(s); n.delete(item.name); return n; });
+    setSaved((s) => new Set(s).add(item.name));
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <p style={{ fontSize: 14, color: "#3d2e3d", lineHeight: 1.6 }}>{data.intro}</p>
+      {data.items.map((item, i) => (
+        <div key={i} style={{
+          background: "rgba(255,255,255,0.7)", backdropFilter: "blur(14px)",
+          border: "0.5px solid rgba(255,255,255,0.95)", borderRadius: 14,
+          padding: "11px 13px", display: "flex", flexDirection: "column", gap: 5,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontSize: 14, fontWeight: 500, color: "#3d2e3d" }}>🍽 {item.name}</span>
+            <SaveBtn saved={saved.has(item.name)} saving={saving.has(item.name)} onClick={() => save(item)} />
+          </div>
+          <p style={{ fontSize: 12, color: "#a090b0" }}>{item.description}</p>
+          <NutritionRow calories={item.calories} protein={item.protein} fat={item.fat} carbs={item.carbs} price={item.price} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Drink Recommendation Cards ────────────────────────────────────────────────
+function DrinkRecommendationCards({ data, onSave }: { data: DrinkRecommendationData; onSave: (shopName: string, item: DrinkItem) => Promise<void> }) {
+  const [saved, setSaved] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState<Set<string>>(new Set());
+
+  async function save(shopName: string, item: DrinkItem) {
+    const key = `${shopName}__${item.name}`;
+    setSaving((s) => new Set(s).add(key));
+    await onSave(shopName, item);
+    setSaving((s) => { const n = new Set(s); n.delete(key); return n; });
+    setSaved((s) => new Set(s).add(key));
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <p style={{ fontSize: 14, color: "#3d2e3d", lineHeight: 1.6 }}>{data.intro}</p>
+
+      {data.shops.length === 0 ? (
+        <p style={{ fontSize: 13, color: "#a090b0" }}>沒有找到附近飲料店，但你可以參考以下通用建議。</p>
+      ) : (
+        data.shops.map((shop, i) => (
+          <div key={i} style={{
+            background: "rgba(255,255,255,0.7)", backdropFilter: "blur(14px)",
+            border: "0.5px solid rgba(255,255,255,0.95)", borderRadius: 14,
+            padding: "11px 13px", display: "flex", flexDirection: "column", gap: 6,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <a href={shop.mapsUrl} target="_blank" rel="noopener noreferrer" style={{
+                fontSize: 14, fontWeight: 500, color: "#3d2e3d",
+                textDecoration: "none", borderBottom: "1px solid rgba(122,90,154,0.3)",
+              }}>
+                {shop.name}
+              </a>
+              <div style={{ display: "flex", gap: 8, fontSize: 11, color: "#a090b0" }}>
+                <span>{shop.isOpen ? "🟢 營業中" : "⚪ 未確認"}</span>
+                <span>🚶 約 {shop.walkingMinutes} 分</span>
+              </div>
+            </div>
+            {shop.items.map((item, j) => {
+              const key = `${shop.name}__${item.name}`;
+              return (
+                <div key={j} style={{
+                  background: "rgba(122,90,154,0.05)", borderRadius: 10,
+                  padding: "8px 10px", display: "flex", flexDirection: "column", gap: 4,
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 13, fontWeight: 500, color: "#3d2e3d" }}>🧋 {item.name}</span>
+                    <SaveBtn saved={saved.has(key)} saving={saving.has(key)} onClick={() => save(shop.name, item)} />
+                  </div>
+                  <div style={{ display: "flex", gap: 8, fontSize: 11, color: "#a090b0", flexWrap: "wrap" as const }}>
+                    <span>{item.size}</span>
+                    <span>糖 {item.sugar}</span>
+                    <span>冰 {item.ice}</span>
+                    <span>🔥 {item.calories} kcal</span>
+                    <span>💰 約 {item.price} 元</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ))
+      )}
+
+      {data.healthy_tip && (
+        <p style={{ fontSize: 12, color: "#7a5a9a", background: "rgba(122,90,154,0.07)", borderRadius: 10, padding: "7px 11px" }}>
+          💡 {data.healthy_tip}
+        </p>
       )}
     </div>
   );
@@ -133,92 +306,57 @@ function RestaurantCards({ data, onSaveFood }: { data: RestaurantCardsData; onSa
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 4 }}>
-      {/* intro */}
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <p style={{ fontSize: 14, color: "#3d2e3d", lineHeight: 1.6 }}>{data.intro}</p>
-
-      {/* tips */}
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {data.budget_tip && (
-          <p style={{ fontSize: 12, color: "#7a5a9a", background: "rgba(122,90,154,0.07)", borderRadius: 10, padding: "6px 10px" }}>
-            💰 {data.budget_tip}
-          </p>
+          <p style={{ fontSize: 12, color: "#7a5a9a", background: "rgba(122,90,154,0.07)", borderRadius: 10, padding: "6px 10px" }}>💰 {data.budget_tip}</p>
         )}
         {data.special_tip && (
-          <p style={{ fontSize: 12, color: "#c08060", background: "rgba(240,160,96,0.08)", borderRadius: 10, padding: "6px 10px" }}>
-            ✨ {data.special_tip}
-          </p>
+          <p style={{ fontSize: 12, color: "#c08060", background: "rgba(240,160,96,0.08)", borderRadius: 10, padding: "6px 10px" }}>✨ {data.special_tip}</p>
         )}
       </div>
-
-      {/* restaurant cards */}
       {data.restaurants.map((r, i) => (
         <div key={i} style={{
           background: "rgba(255,255,255,0.7)", backdropFilter: "blur(14px)",
           border: "0.5px solid rgba(255,255,255,0.95)", borderRadius: 16,
           padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8,
         }}>
-          {/* header */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <a href={r.mapsUrl} target="_blank" rel="noopener noreferrer"
-              style={{ fontSize: 15, fontWeight: 500, color: "#3d2e3d", textDecoration: "none", borderBottom: "1px solid rgba(122,90,154,0.3)" }}>
-              {r.name}
-            </a>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 11, color: r.isOpen ? "#60b880" : "#b0a0b8" }}>
-                {r.isOpen ? "🟢 營業中" : "⚪ 未確認"}
-              </span>
-            </div>
+            <a href={r.mapsUrl} target="_blank" rel="noopener noreferrer" style={{
+              fontSize: 15, fontWeight: 500, color: "#3d2e3d",
+              textDecoration: "none", borderBottom: "1px solid rgba(122,90,154,0.3)",
+            }}>{r.name}</a>
+            <span style={{ fontSize: 11, color: r.isOpen ? "#60b880" : "#b0a0b8" }}>
+              {r.isOpen ? "🟢 營業中" : "⚪ 未確認"}
+            </span>
           </div>
-
-          {/* meta row */}
           <div style={{ display: "flex", gap: 10, fontSize: 12, color: "#a090b0" }}>
             {r.rating && <span>⭐ {r.rating}</span>}
             <span>🚶 約 {r.walkingMinutes} 分鐘</span>
           </div>
-
-          {/* recommendations */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {r.recommendations.map((rec, j) => {
-              const key = `${r.name}__${rec.item}`;
-              const isSaved = saved.has(key);
-              const isSaving = saving.has(key);
-              return (
-                <div key={j} style={{
-                  background: "rgba(122,90,154,0.05)", borderRadius: 10,
-                  padding: "8px 10px", display: "flex", flexDirection: "column", gap: 4,
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <span style={{ fontSize: 13, fontWeight: 500, color: "#3d2e3d" }}>🥗 {rec.item}</span>
-                    <button onClick={() => saveRec(r.name, rec)} disabled={isSaved || isSaving}
-                      style={{
-                        padding: "3px 10px", borderRadius: 14, fontSize: 11,
-                        border: "0.5px solid rgba(122,90,154,0.3)",
-                        background: isSaved ? "rgba(122,90,154,0.1)" : "rgba(255,255,255,0.8)",
-                        color: isSaved ? "#b0a0c8" : "#7a5a9a",
-                        cursor: isSaved || isSaving ? "default" : "pointer",
-                        fontFamily: "inherit", transition: "all 0.15s", whiteSpace: "nowrap",
-                      }}>
-                      {isSaved ? "✓ 已記錄" : isSaving ? "記錄中…" : "+ 記錄"}
-                    </button>
-                  </div>
-                  <div style={{ display: "flex", gap: 8, fontSize: 11, color: "#a090b0", flexWrap: "wrap" }}>
-                    <span>🔥 {rec.calories} kcal</span>
-                    <span>蛋白 {rec.protein}g</span>
-                    <span>脂 {rec.fat}g</span>
-                    <span>碳 {rec.carbs}g</span>
-                    {rec.price > 0 && <span>💰 約 {rec.price} 元</span>}
-                  </div>
+          {r.recommendations.map((rec, j) => {
+            const key = `${r.name}__${rec.item}`;
+            return (
+              <div key={j} style={{
+                background: "rgba(122,90,154,0.05)", borderRadius: 10,
+                padding: "8px 10px", display: "flex", flexDirection: "column", gap: 4,
+              }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 13, fontWeight: 500, color: "#3d2e3d" }}>🥗 {rec.item}</span>
+                  <SaveBtn saved={saved.has(key)} saving={saving.has(key)} onClick={() => saveRec(r.name, rec)} />
                 </div>
-              );
-            })}
-          </div>
+                <NutritionRow calories={rec.calories} protein={rec.protein} fat={rec.fat} carbs={rec.carbs} price={rec.price} />
+              </div>
+            );
+          })}
         </div>
       ))}
     </div>
   );
 }
 
+// ── Main Page ─────────────────────────────────────────────────────────────────
 export default function HomePage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -232,21 +370,12 @@ export default function HomePage() {
   const latRef = useRef<number | null>(null);
   const lngRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    setMessages(loadMessages());
-    setHydrated(true);
-  }, []);
+  useEffect(() => { setMessages(loadMessages()); setHydrated(true); }, []);
+  useEffect(() => { if (hydrated) saveMessages(messages); }, [messages, hydrated]);
+  useEffect(() => { if (hydrated) setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "auto" }), 50); }, [hydrated]);
 
-  useEffect(() => {
-    if (hydrated) saveMessages(messages);
-  }, [messages, hydrated]);
-
-  useEffect(() => {
-    if (hydrated) setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "auto" }), 50);
-  }, [hydrated]);
-
-  const addMessage = (role: "user" | "assistant", text: string, detectedFoods?: string[], restaurantCards?: RestaurantCardsData) => {
-    setMessages((prev) => [...prev, { id: crypto.randomUUID(), role, text, detectedFoods, restaurantCards }]);
+  const addMessage = (role: "user" | "assistant", text: string, extras?: Partial<Message>) => {
+    setMessages((prev) => [...prev, { id: crypto.randomUUID(), role, text, ...extras }]);
     setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
   };
 
@@ -265,41 +394,39 @@ export default function HomePage() {
     );
   };
 
+  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
+
   const saveFood = async (foodName: string) => {
-    setToast(`正在估算「${foodName}」的營養…`);
+    showToast(`正在估算「${foodName}」的營養…`);
     try {
-      const res = await fetch("/api/nutrition", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ foodName }),
-      });
+      const res = await fetch("/api/nutrition", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ foodName }) });
       const data = await res.json();
       if (data.calories !== undefined) {
         addFoodEntry({ name: foodName, meal: currentMeal(), source: "chat", calories: data.calories, protein: data.protein, fat: data.fat, carbs: data.carbs });
-        setToast(`✓ ${foodName} — ${data.calories} kcal 已記錄`);
+        showToast(`✓ ${foodName} — ${data.calories} kcal 已記錄`);
       } else {
         addFoodEntry({ name: foodName, meal: currentMeal(), source: "chat" });
-        setToast(`✓ 已記錄「${foodName}」`);
+        showToast(`✓ 已記錄「${foodName}」`);
       }
     } catch {
       addFoodEntry({ name: foodName, meal: currentMeal(), source: "chat" });
-      setToast(`✓ 已記錄「${foodName}」`);
+      showToast(`✓ 已記錄「${foodName}」`);
     }
-    setTimeout(() => setToast(null), 3000);
+  };
+
+  const saveFoodItem = async (item: FoodItem) => {
+    addFoodEntry({ name: item.name, meal: currentMeal(), source: "chat", calories: item.calories, protein: item.protein, fat: item.fat, carbs: item.carbs });
+    showToast(`✓ ${item.name} — ${item.calories} kcal 已記錄`);
+  };
+
+  const saveDrinkItem = async (shopName: string, item: DrinkItem) => {
+    addFoodEntry({ name: `${item.name}（${shopName}）`, meal: currentMeal(), source: "chat", calories: item.calories });
+    showToast(`✓ ${item.name} — ${item.calories} kcal 已記錄`);
   };
 
   const saveRestaurantFood = async (restaurantName: string, rec: RestaurantRecommendation) => {
-    addFoodEntry({
-      name: `${rec.item}（${restaurantName}）`,
-      meal: currentMeal(),
-      source: "chat",
-      calories: rec.calories,
-      protein: rec.protein,
-      fat: rec.fat,
-      carbs: rec.carbs,
-    });
-    setToast(`✓ ${rec.item} — ${rec.calories} kcal 已記錄`);
-    setTimeout(() => setToast(null), 3000);
+    addFoodEntry({ name: `${rec.item}（${restaurantName}）`, meal: currentMeal(), source: "chat", calories: rec.calories, protein: rec.protein, fat: rec.fat, carbs: rec.carbs });
+    showToast(`✓ ${rec.item} — ${rec.calories} kcal 已記錄`);
   };
 
   const sendMessage = async () => {
@@ -313,7 +440,7 @@ export default function HomePage() {
     const foods = detectFoodsInMessage(userText);
 
     setInput("");
-    addMessage("user", userText, foods);
+    addMessage("user", userText, { detectedFoods: foods });
     setLoading(true);
 
     try {
@@ -325,7 +452,11 @@ export default function HomePage() {
       const data = await res.json();
 
       if (data.restaurantCards) {
-        addMessage("assistant", "", undefined, data.restaurantCards);
+        addMessage("assistant", "", { restaurantCards: data.restaurantCards });
+      } else if (data.foodRecommendation) {
+        addMessage("assistant", "", { foodRecommendation: data.foodRecommendation });
+      } else if (data.drinkRecommendation) {
+        addMessage("assistant", "", { drinkRecommendation: data.drinkRecommendation });
       } else if (data.parts && Array.isArray(data.parts)) {
         for (const part of data.parts) {
           if (part?.text) addMessage("assistant", part.text);
@@ -362,6 +493,22 @@ export default function HomePage() {
     }
   };
 
+  const renderMessage = (msg: Message) => {
+    if (msg.restaurantCards) return <RestaurantCards data={msg.restaurantCards} onSaveFood={saveRestaurantFood} />;
+    if (msg.foodRecommendation) return <FoodRecommendationCards data={msg.foodRecommendation} onSave={saveFoodItem} />;
+    if (msg.drinkRecommendation) return <DrinkRecommendationCards data={msg.drinkRecommendation} onSave={saveDrinkItem} />;
+    return (
+      <div className="bubble-bot">
+        <ReactMarkdown rehypePlugins={[rehypeRaw]} components={{
+          a: ({ ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+          p: ({ children }) => <p>{children}</p>,
+        }}>
+          {msg.text}
+        </ReactMarkdown>
+      </div>
+    );
+  };
+
   return (
     <>
       <style>{`
@@ -383,9 +530,9 @@ export default function HomePage() {
         .diary-btn:hover { background: rgba(122,90,154,0.18); }
         .msgs { flex: 1; overflow-y: auto; padding: 8px 20px 12px; display: flex; flex-direction: column; gap: 14px; scrollbar-width: none; }
         .msgs::-webkit-scrollbar { display: none; }
-        .msg-row-bot { display: flex; flex-direction: column; align-items: flex-start; max-width: 92%; }
+        .msg-row-bot { display: flex; flex-direction: column; align-items: flex-start; width: 100%; }
         .msg-row-user { display: flex; flex-direction: column; align-items: flex-end; }
-        .bubble-bot { max-width: 100%; background: rgba(255,255,255,0.65); backdrop-filter: blur(16px); border: 0.5px solid rgba(255,255,255,0.9); border-radius: 4px 20px 20px 20px; padding: 14px 16px; color: #3d2e3d; font-size: 14px; line-height: 1.65; box-shadow: 0 2px 20px rgba(180,140,200,0.07); animation: fadeUp 0.3s ease both; }
+        .bubble-bot { max-width: 88%; background: rgba(255,255,255,0.65); backdrop-filter: blur(16px); border: 0.5px solid rgba(255,255,255,0.9); border-radius: 4px 20px 20px 20px; padding: 14px 16px; color: #3d2e3d; font-size: 14px; line-height: 1.65; box-shadow: 0 2px 20px rgba(180,140,200,0.07); animation: fadeUp 0.3s ease both; }
         .bubble-bot p { margin-bottom: 6px; }
         .bubble-bot p:last-child { margin-bottom: 0; }
         .bubble-bot a { color: #7a5a9a; text-decoration: underline; }
@@ -430,23 +577,7 @@ export default function HomePage() {
           {messages.map((msg) =>
             msg.role === "assistant" ? (
               <div key={msg.id} className="msg-row-bot">
-                {msg.restaurantCards ? (
-                  <div className="bubble-bot" style={{ width: "100%", background: "transparent", border: "none", padding: 0, boxShadow: "none" }}>
-                    <RestaurantCards data={msg.restaurantCards} onSaveFood={saveRestaurantFood} />
-                  </div>
-                ) : (
-                  <div className="bubble-bot">
-                    <ReactMarkdown
-                      rehypePlugins={[rehypeRaw]}
-                      components={{
-                        a: ({ ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
-                        p: ({ children }) => <p>{children}</p>,
-                      }}
-                    >
-                      {msg.text}
-                    </ReactMarkdown>
-                  </div>
-                )}
+                {renderMessage(msg)}
               </div>
             ) : (
               <div key={msg.id} className="msg-row-user">
