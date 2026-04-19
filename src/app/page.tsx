@@ -6,6 +6,10 @@ import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import { addFoodEntry, getTodaySummary } from "@/lib/foodStore";
 import { getZooState, getAnimalEmoji, getWeekKey, HatchedAnimal, getAnimalDef } from "@/lib/animalStore";
+import { startNotificationScheduler } from "@/lib/notification";
+useEffect(() => {
+  startNotificationScheduler();
+}, []);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Message = {
