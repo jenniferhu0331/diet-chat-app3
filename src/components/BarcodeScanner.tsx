@@ -17,7 +17,7 @@ interface BarcodeScannerProps {
   onClose: () => void;
 }
 
-export default function BarcodeScanner({ onResult, onClose }: BarcodeScannerProps) {
+export default function BarcodeScanner({ onResult, onClose }: BarcodeScannerProps): JSX.Element {
   const videoRef = useRef<HTMLVideoElement>(null);
   const readerRef = useRef<BrowserMultiFormatReader | null>(null);
   const [status, setStatus] = useState<"scanning" | "loading" | "error">("scanning");
@@ -60,9 +60,8 @@ export default function BarcodeScanner({ onResult, onClose }: BarcodeScannerProp
     });
 
     return () => {
-      reader.reset();
-    };
-  }, []);
+      try { (reader as any).reset(); } catch {}
+    };  
 
   return (
     <>

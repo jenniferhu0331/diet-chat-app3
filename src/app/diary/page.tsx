@@ -25,15 +25,8 @@ function GoalEditor({ goal, onSave }: { goal: number; onSave: (v: number) => voi
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(String(goal));
   const inputRef = useRef<HTMLInputElement>(null);
-
   useEffect(() => { if (editing) inputRef.current?.focus(); }, [editing]);
-
-  function confirm() {
-    const n = parseInt(val);
-    if (n > 0) onSave(n);
-    setEditing(false);
-  }
-
+  function confirm() { const n = parseInt(val); if (n > 0) onSave(n); setEditing(false); }
   if (editing) {
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -45,7 +38,6 @@ function GoalEditor({ goal, onSave }: { goal: number; onSave: (v: number) => voi
       </div>
     );
   }
-
   return (
     <button onClick={() => { setVal(String(goal)); setEditing(true); }}
       style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", padding: 0 }}>
@@ -59,9 +51,10 @@ function GoalEditor({ goal, onSave }: { goal: number; onSave: (v: number) => voi
 interface AddModalProps {
   onClose: () => void;
   onAdd: (entry: Omit<FoodEntry, "id" | "addedAt">) => void;
+  targetDate: Date; // 新增：記錄到哪一天
 }
 
-function AddModal({ onClose, onAdd }: AddModalProps) {
+function AddModal({ onClose, onAdd, targetDate }: AddModalProps) {
   const [name, setName] = useState("");
   const [meal, setMeal] = useState<Meal>("午餐");
   const [calories, setCalories] = useState("");
@@ -85,11 +78,7 @@ function AddModal({ onClose, onAdd }: AddModalProps) {
     if (!name.trim()) return;
     setEstimating(true);
     try {
-      const res = await fetch("/api/nutrition", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ foodName: name.trim() }),
-      });
+      const res = await fetch("/api/nutrition", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ foodName: name.trim() }) });
       const data = await res.json();
       if (data.calories) setCalories(String(data.calories));
       if (data.protein) setProtein(String(data.protein));
@@ -112,43 +101,41 @@ function AddModal({ onClose, onAdd }: AddModalProps) {
     onClose();
   }
 
+  const isToday = targetDate.toDateString() === new Date().toDateString();
+  const dateLabel = isToday ? "今天" : targetDate.toLocaleDateString("zh-TW", { month: "long", day: "numeric", weekday: "short" });
+
   return (
     <>
       <div className="modal-backdrop" onClick={onClose}>
         <div className="modal-card" onClick={(e) => e.stopPropagation()}>
           <div className="modal-handle" />
-          <p className="modal-title">新增食物</p>
-
-          <label className="field-label">食物名稱</label>
-          <div style={{ display: "flex", gap: 8 }}>
-            <input ref={nameRef} className="field-input" style={{ flex: 1 }}
-              placeholder="例：滷肉飯、珍珠奶茶"
-              value={name} onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && submit()} />
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+            <p className="modal-title" style={{ marginBottom: 0 }}>新增食物</p>
+            {!isToday && (
+              <span style={{ fontSize: 12, color: "#7a5a9a", background: "rgba(122,90,154,0.1)", borderRadius: 10, padding: "4px 10px" }}>
+                補記 {dateLabel}
+              </span>
+            )}
           </div>
 
-          {/* 按鈕列 */}
+          <label className="field-label">食物名稱</label>
+          <input ref={nameRef} className="field-input"
+            placeholder="例：滷肉飯、珍珠奶茶"
+            value={name} onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()} />
+
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-            <button onClick={() => setShowScanner(true)}
-              style={{
-                flex: 1, padding: "9px 0", borderRadius: 12,
-                background: "rgba(96,184,240,0.1)",
-                border: "0.5px solid rgba(96,184,240,0.3)",
-                color: "#4090b8", fontSize: 12, cursor: "pointer",
-                fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-              }}>
-              📷 掃描條碼
-            </button>
-            <button onClick={estimate} disabled={!name.trim() || estimating}
-              style={{
-                flex: 1, padding: "9px 0", borderRadius: 12,
-                background: "rgba(122,90,154,0.1)",
-                border: "0.5px solid rgba(122,90,154,0.2)",
-                color: "#7a5a9a", fontSize: 12, cursor: "pointer",
-                fontFamily: "inherit",
-              }}>
-              {estimating ? "估算中…" : "✨ AI 估算"}
-            </button>
+            <button onClick={() => setShowScanner(true)} style={{
+              flex: 1, padding: "9px 0", borderRadius: 12,
+              background: "rgba(96,184,240,0.1)", border: "0.5px solid rgba(96,184,240,0.3)",
+              color: "#4090b8", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+            }}>📷 掃描條碼</button>
+            <button onClick={estimate} disabled={!name.trim() || estimating} style={{
+              flex: 1, padding: "9px 0", borderRadius: 12,
+              background: "rgba(122,90,154,0.1)", border: "0.5px solid rgba(122,90,154,0.2)",
+              color: "#7a5a9a", fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+            }}>{estimating ? "估算中…" : "✨ AI 估算"}</button>
           </div>
 
           <label className="field-label">餐別</label>
@@ -170,8 +157,7 @@ function AddModal({ onClose, onAdd }: AddModalProps) {
             ].map(({ label, val, set }) => (
               <div key={label} className="macro-field">
                 <span className="macro-label">{label}</span>
-                <input className="macro-input" type="number" min="0" placeholder="—"
-                  value={val} onChange={(e) => set(e.target.value)} />
+                <input className="macro-input" type="number" min="0" placeholder="—" value={val} onChange={(e) => set(e.target.value)} />
               </div>
             ))}
           </div>
@@ -181,7 +167,6 @@ function AddModal({ onClose, onAdd }: AddModalProps) {
         </div>
       </div>
 
-      {/* 條碼掃描器 */}
       {showScanner && (
         <BarcodeScanner
           onClose={() => setShowScanner(false)}
@@ -258,35 +243,40 @@ export default function DiaryPage() {
     if (saved) setGoal(parseInt(saved));
   }, []);
 
-  function saveGoal(v: number) {
-    setGoal(v);
-    localStorage.setItem(GOAL_KEY, String(v));
-  }
+  function saveGoal(v: number) { setGoal(v); localStorage.setItem(GOAL_KEY, String(v)); }
 
-  function refresh() {
-    setLog(getFoodLog());
-    setSummary(getTodaySummary());
-  }
+  function refresh() { setLog(getFoodLog()); setSummary(getTodaySummary()); }
+  useEffect(() => { refresh(); return onFoodLogChange(refresh); }, []);
 
-  useEffect(() => {
-    refresh();
-    return onFoodLogChange(refresh);
-  }, []);
-
+  // 計算選取日期的摘要
   const dayEntries = log.filter((e) => new Date(e.addedAt).toDateString() === activeDay);
+  const dayCalories = dayEntries.reduce((s, e) => s + (e.calories ?? 0), 0);
   const byMeal = MEALS.reduce((acc, m) => {
     acc[m] = dayEntries.filter((e) => e.meal === m);
     return acc;
   }, {} as Record<Meal, FoodEntry[]>);
 
+  // 日期從左到右（舊到新）
   const days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
-    d.setDate(d.getDate() - i);
+    d.setDate(d.getDate() - (6 - i)); // 從6天前到今天
     return d;
   });
 
-  const kcalPct = Math.min(summary.totalCalories / goal, 1);
-  const remaining = Math.max(goal - summary.totalCalories, 0);
+  const activeDateObj = new Date(activeDay);
+  const isActiveToday = activeDay === new Date().toDateString();
+  const kcalForDisplay = isActiveToday ? summary.totalCalories : dayCalories;
+  const kcalPct = Math.min(kcalForDisplay / goal, 1);
+  const remaining = Math.max(goal - kcalForDisplay, 0);
+
+  // 新增食物時帶入選取的日期
+  function handleAdd(entry: Omit<FoodEntry, "id" | "addedAt">) {
+    // 設定 addedAt 為選取日期的當前時間（補記時用選取日的日期）
+    const targetDate = new Date(activeDay);
+    const now = new Date();
+    targetDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds());
+    addFoodEntry({ ...entry, source: "manual" }, targetDate.toISOString());
+  }
 
   return (
     <>
@@ -346,14 +336,14 @@ export default function DiaryPage() {
         .entry-time { font-size: 11px; color: #c0b0c8; margin-top: 2px; }
         .entry-delete { width: 26px; height: 26px; border-radius: 50%; background: rgba(200,180,200,0.2); border: none; cursor: pointer; font-size: 16px; color: #b0a0b8; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background 0.15s, color 0.15s; }
         .entry-delete:hover { background: #fce4e4; color: #d06060; }
-        .bot-nav { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 430px; padding: 12px 24px 28px; background: linear-gradient(to top, rgba(250,247,245,0.98) 70%, transparent); display: flex; gap: 12px; }
+        .bot-nav { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 430px; padding: 12px 24px 28px; background: linear-gradient(to top, rgba(250,247,245,0.98) 70%, transparent); display: flex; gap: 12px; z-index: 50; }
         .nav-btn { flex: 1; padding: 12px; border-radius: 16px; border: none; cursor: pointer; font-family: 'Noto Sans TC', sans-serif; font-size: 14px; font-weight: 500; transition: all 0.15s; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 6px; }
         .nav-btn-ghost { background: rgba(255,255,255,0.6); backdrop-filter: blur(10px); border: 0.5px solid rgba(255,255,255,0.9); color: #7a5a9a; }
         .nav-btn-ghost:hover { background: rgba(255,255,255,0.85); }
         .nav-btn-primary { background: #7a5a9a; color: #fff; }
         .nav-btn-primary:hover { background: #6a4a8a; }
         .modal-backdrop { position: fixed; inset: 0; z-index: 100; background: rgba(60,40,80,0.35); backdrop-filter: blur(4px); display: flex; align-items: flex-end; justify-content: center; animation: fadeIn 0.2s ease; }
-        .modal-card { width: 100%; max-width: 430px; background: #faf7f5; border-radius: 24px 24px 0 0; padding: 16px 20px 40px; animation: slideUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
+        .modal-card { width: 100%; max-width: 430px; background: #faf7f5; border-radius: 24px 24px 0 0; padding: 16px 20px 40px; animation: slideUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); max-height: 90dvh; overflow-y: auto; }
         .modal-handle { width: 36px; height: 4px; border-radius: 2px; background: #d8c8e8; margin: 0 auto 20px; }
         .modal-title { font-family: 'DM Serif Display', serif; font-size: 20px; color: #3d2e3d; margin-bottom: 20px; }
         .field-label { display: block; font-size: 12px; color: #a090b0; font-weight: 500; margin-bottom: 6px; margin-top: 14px; }
@@ -390,6 +380,7 @@ export default function DiaryPage() {
           <button className="add-btn" onClick={() => setShowModal(true)}>+</button>
         </div>
 
+        {/* 日期從左到右（舊→新） */}
         <div className="day-scroll">
           {days.map((d) => {
             const ds = d.toDateString();
@@ -403,31 +394,34 @@ export default function DiaryPage() {
           })}
         </div>
 
-        {activeDay === new Date().toDateString() && (
-          <div className="summary">
-            <div className="summary-top">
-              <div className="kcal-left">
-                <span className="kcal-num">{Math.round(summary.totalCalories)}</span>
-                <span className="kcal-label">kcal</span>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
-                <GoalEditor goal={goal} onSave={saveGoal} />
+        {/* 摘要（任何日期都顯示） */}
+        <div className="summary">
+          <div className="summary-top">
+            <div className="kcal-left">
+              <span className="kcal-num">{Math.round(kcalForDisplay)}</span>
+              <span className="kcal-label">kcal</span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+              {isActiveToday && <GoalEditor goal={goal} onSave={saveGoal} />}
+              {isActiveToday ? (
                 <span className="kcal-remain">
-                  {summary.totalCalories >= goal ? `超出 ${Math.round(summary.totalCalories - goal)} kcal` : `還剩 ${Math.round(remaining)} kcal`}
+                  {kcalForDisplay >= goal ? `超出 ${Math.round(kcalForDisplay - goal)} kcal` : `還剩 ${Math.round(remaining)} kcal`}
                 </span>
-              </div>
-            </div>
-            <div className="progress-track">
-              <div className={`progress-fill${summary.totalCalories > goal ? " over" : ""}`}
-                style={{ width: `${Math.round(kcalPct * 100)}%` }} />
-            </div>
-            <div className="rings">
-              <MacroRing label="蛋白質" value={summary.totalProtein} unit="g" color="#9a7ad8" max={60} />
-              <MacroRing label="脂肪"   value={summary.totalFat}     unit="g" color="#f0a060" max={65} />
-              <MacroRing label="碳水"   value={summary.totalCarbs}   unit="g" color="#60c8a0" max={130} />
+              ) : (
+                <span className="kcal-remain">目標 {goal} kcal</span>
+              )}
             </div>
           </div>
-        )}
+          <div className="progress-track">
+            <div className={`progress-fill${kcalForDisplay > goal ? " over" : ""}`}
+              style={{ width: `${Math.round(kcalPct * 100)}%` }} />
+          </div>
+          <div className="rings">
+            <MacroRing label="蛋白質" value={dayEntries.reduce((s, e) => s + (e.protein ?? 0), 0)} unit="g" color="#9a7ad8" max={60} />
+            <MacroRing label="脂肪" value={dayEntries.reduce((s, e) => s + (e.fat ?? 0), 0)} unit="g" color="#f0a060" max={65} />
+            <MacroRing label="碳水" value={dayEntries.reduce((s, e) => s + (e.carbs ?? 0), 0)} unit="g" color="#60c8a0" max={130} />
+          </div>
+        </div>
 
         {MEALS.map((m) => {
           const entries = byMeal[m];
@@ -441,22 +435,25 @@ export default function DiaryPage() {
               {entries.length === 0 ? (
                 <p className="empty-meal">尚無紀錄</p>
               ) : (
-                entries.map((e) => (
-                  <EntryCard key={e.id} entry={e} onDelete={() => removeFoodEntry(e.id)} />
-                ))
+                entries.map((e) => <EntryCard key={e.id} entry={e} onDelete={() => removeFoodEntry(e.id)} />)
               )}
             </div>
           );
         })}
       </div>
 
+      {/* 底部導覽 — z-index: 50 確保可點擊 */}
       <div className="bot-nav">
         <Link href="/" className="nav-btn nav-btn-ghost">💬 回到對話</Link>
         <button className="nav-btn nav-btn-primary" onClick={() => setShowModal(true)}>+ 新增食物</button>
       </div>
 
       {showModal && (
-        <AddModal onClose={() => setShowModal(false)} onAdd={(entry) => addFoodEntry({ ...entry, source: "manual" })} />
+        <AddModal
+          onClose={() => setShowModal(false)}
+          onAdd={handleAdd}
+          targetDate={activeDateObj}
+        />
       )}
     </>
   );
