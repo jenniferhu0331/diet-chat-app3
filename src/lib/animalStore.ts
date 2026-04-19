@@ -57,9 +57,36 @@ export function getWeekKey(date = new Date()): string {
 export function getZooState(): ZooState {
   try {
     const raw = localStorage.getItem(ZOO_KEY);
-    if (raw) return JSON.parse(raw) as ZooState;
+    if (raw) {
+      const state = JSON.parse(raw) as ZooState;
+      // 確保本週有一隻蛋
+      ensureCurrentWeekAnimal(state);
+      return state;
+    }
   } catch {}
-  return { animals: [], currentEggId: null, weekProgress: {} };
+  // 第一次使用，建立初始動物
+  const initial: ZooState = { animals: [], currentEggId: null, weekProgress: {} };
+  ensureCurrentWeekAnimal(initial);
+  return initial;
+}
+
+function ensureCurrentWeekAnimal(state: ZooState): void {
+  const weekKey = getWeekKey();
+  const hasThisWeek = state.animals.some((a) => a.weekKey === weekKey);
+  if (!hasThisWeek) {
+    const def = pickRandomDef(state.animals);
+    const newAnimal: HatchedAnimal = {
+      id: crypto.randomUUID(),
+      defId: def.id,
+      name: def.name,
+      stage: 0,
+      hatchedAt: new Date().toISOString(),
+      weekKey,
+    };
+    state.animals.push(newAnimal);
+    state.currentEggId = newAnimal.id;
+    localStorage.setItem(ZOO_KEY, JSON.stringify(state));
+  }
 }
 
 function saveZooState(state: ZooState) {
