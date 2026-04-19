@@ -32,11 +32,11 @@ export function getFoodLog(): FoodEntry[] {
 }
 
 // ── Write ─────────────────────────────────────────────────────────────────────
-export function addFoodEntry(entry: Omit<FoodEntry, "id" | "addedAt">): FoodEntry {
+export function addFoodEntry(entry: Omit<FoodEntry, "id" | "addedAt">, customTime?: string): FoodEntry {
   const full: FoodEntry = {
     ...entry,
     id: crypto.randomUUID(),
-    addedAt: new Date().toISOString(),
+    addedAt: customTime ?? new Date().toISOString(),
   };
   const log = getFoodLog();
   log.push(full);
