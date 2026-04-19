@@ -11,6 +11,32 @@ type Message = {
   role: "user" | "assistant";
   text: string;
   detectedFoods?: string[];
+  restaurantCards?: RestaurantCardsData;
+};
+
+type RestaurantRecommendation = {
+  item: string;
+  calories: number;
+  protein: number;
+  fat: number;
+  carbs: number;
+  price: number;
+};
+
+type RestaurantCard = {
+  name: string;
+  mapsUrl: string;
+  rating: number;
+  isOpen: boolean;
+  walkingMinutes: number;
+  recommendations: RestaurantRecommendation[];
+};
+
+type RestaurantCardsData = {
+  intro: string;
+  budget_tip: string;
+  special_tip: string;
+  restaurants: RestaurantCard[];
 };
 
 const MESSAGES_KEY = "diet-chat-messages";
@@ -34,9 +60,7 @@ function loadMessages(): Message[] {
 
 function saveMessages(msgs: Message[]) {
   try {
-    // 只保留最近 60 則避免塞爆
-    const trimmed = msgs.slice(-60);
-    localStorage.setItem(MESSAGES_KEY, JSON.stringify(trimmed));
+    localStorage.setItem(MESSAGES_KEY, JSON.stringify(msgs.slice(-60)));
   } catch {}
 }
 
@@ -84,8 +108,7 @@ function FoodChips({ foods, onSave }: { foods: string[]; onSave: (f: string) => 
             fontSize: 12,
             cursor: (saved.has(f) || saving.has(f)) ? "default" : "pointer",
             fontFamily: "inherit", transition: "all 0.15s",
-          }}
-        >
+          }}>
           {saved.has(f) ? "✓" : saving.has(f) ? "估算中…" : "+"} {f}
         </button>
       ))}
@@ -96,11 +119,109 @@ function FoodChips({ foods, onSave }: { foods: string[]; onSave: (f: string) => 
   );
 }
 
+// ── Restaurant Cards ──────────────────────────────────────────────────────────
+function RestaurantCards({ data, onSaveFood }: { data: RestaurantCardsData; onSaveFood: (name: string, rec: RestaurantRecommendation) => Promise<void> }) {
+  const [saved, setSaved] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState<Set<string>>(new Set());
+
+  async function saveRec(restaurantName: string, rec: RestaurantRecommendation) {
+    const key = `${restaurantName}__${rec.item}`;
+    setSaving((s) => new Set(s).add(key));
+    await onSaveFood(restaurantName, rec);
+    setSaving((s) => { const n = new Set(s); n.delete(key); return n; });
+    setSaved((s) => new Set(s).add(key));
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 4 }}>
+      {/* intro */}
+      <p style={{ fontSize: 14, color: "#3d2e3d", lineHeight: 1.6 }}>{data.intro}</p>
+
+      {/* tips */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {data.budget_tip && (
+          <p style={{ fontSize: 12, color: "#7a5a9a", background: "rgba(122,90,154,0.07)", borderRadius: 10, padding: "6px 10px" }}>
+            💰 {data.budget_tip}
+          </p>
+        )}
+        {data.special_tip && (
+          <p style={{ fontSize: 12, color: "#c08060", background: "rgba(240,160,96,0.08)", borderRadius: 10, padding: "6px 10px" }}>
+            ✨ {data.special_tip}
+          </p>
+        )}
+      </div>
+
+      {/* restaurant cards */}
+      {data.restaurants.map((r, i) => (
+        <div key={i} style={{
+          background: "rgba(255,255,255,0.7)", backdropFilter: "blur(14px)",
+          border: "0.5px solid rgba(255,255,255,0.95)", borderRadius: 16,
+          padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8,
+        }}>
+          {/* header */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <a href={r.mapsUrl} target="_blank" rel="noopener noreferrer"
+              style={{ fontSize: 15, fontWeight: 500, color: "#3d2e3d", textDecoration: "none", borderBottom: "1px solid rgba(122,90,154,0.3)" }}>
+              {r.name}
+            </a>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 11, color: r.isOpen ? "#60b880" : "#b0a0b8" }}>
+                {r.isOpen ? "🟢 營業中" : "⚪ 未確認"}
+              </span>
+            </div>
+          </div>
+
+          {/* meta row */}
+          <div style={{ display: "flex", gap: 10, fontSize: 12, color: "#a090b0" }}>
+            {r.rating && <span>⭐ {r.rating}</span>}
+            <span>🚶 約 {r.walkingMinutes} 分鐘</span>
+          </div>
+
+          {/* recommendations */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {r.recommendations.map((rec, j) => {
+              const key = `${r.name}__${rec.item}`;
+              const isSaved = saved.has(key);
+              const isSaving = saving.has(key);
+              return (
+                <div key={j} style={{
+                  background: "rgba(122,90,154,0.05)", borderRadius: 10,
+                  padding: "8px 10px", display: "flex", flexDirection: "column", gap: 4,
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 13, fontWeight: 500, color: "#3d2e3d" }}>🥗 {rec.item}</span>
+                    <button onClick={() => saveRec(r.name, rec)} disabled={isSaved || isSaving}
+                      style={{
+                        padding: "3px 10px", borderRadius: 14, fontSize: 11,
+                        border: "0.5px solid rgba(122,90,154,0.3)",
+                        background: isSaved ? "rgba(122,90,154,0.1)" : "rgba(255,255,255,0.8)",
+                        color: isSaved ? "#b0a0c8" : "#7a5a9a",
+                        cursor: isSaved || isSaving ? "default" : "pointer",
+                        fontFamily: "inherit", transition: "all 0.15s", whiteSpace: "nowrap",
+                      }}>
+                      {isSaved ? "✓ 已記錄" : isSaving ? "記錄中…" : "+ 記錄"}
+                    </button>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, fontSize: 11, color: "#a090b0", flexWrap: "wrap" }}>
+                    <span>🔥 {rec.calories} kcal</span>
+                    <span>蛋白 {rec.protein}g</span>
+                    <span>脂 {rec.fat}g</span>
+                    <span>碳 {rec.carbs}g</span>
+                    {rec.price > 0 && <span>💰 約 {rec.price} 元</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function HomePage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
-  const [lat, setLat] = useState<number | null>(null);
-  const [lng, setLng] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [locationReady, setLocationReady] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -108,35 +229,32 @@ export default function HomePage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastSendTimeRef = useRef(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const latRef = useRef<number | null>(null);
+  const lngRef = useRef<number | null>(null);
 
-  // 載入對話紀錄
   useEffect(() => {
     setMessages(loadMessages());
     setHydrated(true);
   }, []);
 
-  // 儲存對話紀錄
   useEffect(() => {
     if (hydrated) saveMessages(messages);
   }, [messages, hydrated]);
 
-  // 捲到最新
   useEffect(() => {
-    if (hydrated) {
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "auto" }), 50);
-    }
+    if (hydrated) setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "auto" }), 50);
   }, [hydrated]);
 
-  const addMessage = (role: "user" | "assistant", text: string, detectedFoods?: string[]) => {
-    setMessages((prev) => [...prev, { id: crypto.randomUUID(), role, text, detectedFoods }]);
+  const addMessage = (role: "user" | "assistant", text: string, detectedFoods?: string[], restaurantCards?: RestaurantCardsData) => {
+    setMessages((prev) => [...prev, { id: crypto.randomUUID(), role, text, detectedFoods, restaurantCards }]);
     setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
   };
 
   const getLocation = () => {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        setLat(pos.coords.latitude);
-        setLng(pos.coords.longitude);
+        latRef.current = pos.coords.latitude;
+        lngRef.current = pos.coords.longitude;
         setLocationReady(true);
         addMessage("assistant", "收到你的位置了，之後如果你想找附近的店，我可以直接幫你查。");
       },
@@ -157,8 +275,7 @@ export default function HomePage() {
       });
       const data = await res.json();
       if (data.calories !== undefined) {
-        addFoodEntry({ name: foodName, meal: currentMeal(), source: "chat",
-          calories: data.calories, protein: data.protein, fat: data.fat, carbs: data.carbs });
+        addFoodEntry({ name: foodName, meal: currentMeal(), source: "chat", calories: data.calories, protein: data.protein, fat: data.fat, carbs: data.carbs });
         setToast(`✓ ${foodName} — ${data.calories} kcal 已記錄`);
       } else {
         addFoodEntry({ name: foodName, meal: currentMeal(), source: "chat" });
@@ -168,6 +285,20 @@ export default function HomePage() {
       addFoodEntry({ name: foodName, meal: currentMeal(), source: "chat" });
       setToast(`✓ 已記錄「${foodName}」`);
     }
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  const saveRestaurantFood = async (restaurantName: string, rec: RestaurantRecommendation) => {
+    addFoodEntry({
+      name: `${rec.item}（${restaurantName}）`,
+      meal: currentMeal(),
+      source: "chat",
+      calories: rec.calories,
+      protein: rec.protein,
+      fat: rec.fat,
+      carbs: rec.carbs,
+    });
+    setToast(`✓ ${rec.item} — ${rec.calories} kcal 已記錄`);
     setTimeout(() => setToast(null), 3000);
   };
 
@@ -189,10 +320,13 @@ export default function HomePage() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: userText, lat, lng, history: historyToSend }),
+        body: JSON.stringify({ message: userText, lat: latRef.current, lng: lngRef.current, history: historyToSend }),
       });
       const data = await res.json();
-      if (data.parts && Array.isArray(data.parts)) {
+
+      if (data.restaurantCards) {
+        addMessage("assistant", "", undefined, data.restaurantCards);
+      } else if (data.parts && Array.isArray(data.parts)) {
         for (const part of data.parts) {
           if (part?.text) addMessage("assistant", part.text);
         }
@@ -249,9 +383,9 @@ export default function HomePage() {
         .diary-btn:hover { background: rgba(122,90,154,0.18); }
         .msgs { flex: 1; overflow-y: auto; padding: 8px 20px 12px; display: flex; flex-direction: column; gap: 14px; scrollbar-width: none; }
         .msgs::-webkit-scrollbar { display: none; }
-        .msg-row-bot { display: flex; flex-direction: column; align-items: flex-start; }
+        .msg-row-bot { display: flex; flex-direction: column; align-items: flex-start; max-width: 92%; }
         .msg-row-user { display: flex; flex-direction: column; align-items: flex-end; }
-        .bubble-bot { max-width: 82%; background: rgba(255,255,255,0.65); backdrop-filter: blur(16px); border: 0.5px solid rgba(255,255,255,0.9); border-radius: 4px 20px 20px 20px; padding: 14px 16px; color: #3d2e3d; font-size: 14px; line-height: 1.65; box-shadow: 0 2px 20px rgba(180,140,200,0.07); animation: fadeUp 0.3s ease both; }
+        .bubble-bot { max-width: 100%; background: rgba(255,255,255,0.65); backdrop-filter: blur(16px); border: 0.5px solid rgba(255,255,255,0.9); border-radius: 4px 20px 20px 20px; padding: 14px 16px; color: #3d2e3d; font-size: 14px; line-height: 1.65; box-shadow: 0 2px 20px rgba(180,140,200,0.07); animation: fadeUp 0.3s ease both; }
         .bubble-bot p { margin-bottom: 6px; }
         .bubble-bot p:last-child { margin-bottom: 0; }
         .bubble-bot a { color: #7a5a9a; text-decoration: underline; }
@@ -296,17 +430,23 @@ export default function HomePage() {
           {messages.map((msg) =>
             msg.role === "assistant" ? (
               <div key={msg.id} className="msg-row-bot">
-                <div className="bubble-bot">
-                  <ReactMarkdown
-                    rehypePlugins={[rehypeRaw]}
-                    components={{
-                      a: ({ ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
-                      p: ({ children }) => <p>{children}</p>,
-                    }}
-                  >
-                    {msg.text}
-                  </ReactMarkdown>
-                </div>
+                {msg.restaurantCards ? (
+                  <div className="bubble-bot" style={{ width: "100%", background: "transparent", border: "none", padding: 0, boxShadow: "none" }}>
+                    <RestaurantCards data={msg.restaurantCards} onSaveFood={saveRestaurantFood} />
+                  </div>
+                ) : (
+                  <div className="bubble-bot">
+                    <ReactMarkdown
+                      rehypePlugins={[rehypeRaw]}
+                      components={{
+                        a: ({ ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+                        p: ({ children }) => <p>{children}</p>,
+                      }}
+                    >
+                      {msg.text}
+                    </ReactMarkdown>
+                  </div>
+                )}
               </div>
             ) : (
               <div key={msg.id} className="msg-row-user">

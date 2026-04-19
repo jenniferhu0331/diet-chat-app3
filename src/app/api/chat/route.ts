@@ -17,7 +17,6 @@ async function generateText(model: string, prompt: string) {
     model,
     contents: prompt,
   });
-
   return result.text ?? "";
 }
 
@@ -26,31 +25,18 @@ async function generateTextWithFallback(prompt: string) {
     return await generateText(GEMINI_MODEL, prompt);
   } catch (error: any) {
     const msg = String(error?.message || "");
-
     const retryable =
-      msg.includes("503") ||
-      msg.includes("UNAVAILABLE") ||
-      msg.includes("429") ||
-      msg.includes("RESOURCE_EXHAUSTED");
-
-    if (!retryable) {
-      throw error;
-    }
-
+      msg.includes("503") || msg.includes("UNAVAILABLE") ||
+      msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED");
+    if (!retryable) throw error;
     try {
       return await generateText(GEMINI_FALLBACK_MODEL, prompt);
     } catch (fallbackError: any) {
       const fallbackMsg = String(fallbackError?.message || "");
       const fallbackRetryable =
-        fallbackMsg.includes("503") ||
-        fallbackMsg.includes("UNAVAILABLE") ||
-        fallbackMsg.includes("429") ||
-        fallbackMsg.includes("RESOURCE_EXHAUSTED");
-
-      if (fallbackRetryable) {
-        return null;
-      }
-
+        fallbackMsg.includes("503") || fallbackMsg.includes("UNAVAILABLE") ||
+        fallbackMsg.includes("429") || fallbackMsg.includes("RESOURCE_EXHAUSTED");
+      if (fallbackRetryable) return null;
       throw fallbackError;
     }
   }
@@ -64,19 +50,11 @@ function formatHistory(history: HistoryMessage[] = []) {
 }
 
 function splitParts(text: string) {
-  return text
-    .split(/\n+/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .map((s) => ({ text: s }));
+  return text.split(/\n+/).map((s) => s.trim()).filter(Boolean).map((s) => ({ text: s }));
 }
 
-async function classifyIntent(
-  message: string,
-  history: HistoryMessage[] = []
-): Promise<IntentResult> {
+async function classifyIntent(message: string, history: HistoryMessage[] = []): Promise<IntentResult> {
   const historyText = formatHistory(history);
-
   const prompt = `
 你是一個對話意圖分類器。
 請根據使用者最新訊息與對話上下文，判斷這句話的主要意圖。
@@ -95,10 +73,7 @@ async function classifyIntent(
 6. 像「我沒有要叫你找餐廳」應該不是 restaurant_search。
 
 請只輸出 JSON，格式如下：
-{
-  "intent": "emotional_support | general_chat | restaurant_search",
-  "reason": "簡短中文原因，不超過30字"
-}
+{"intent":"emotional_support | general_chat | restaurant_search","reason":"簡短中文原因，不超過30字"}
 
 對話上下文：
 ${historyText || "（無）"}
@@ -106,66 +81,34 @@ ${historyText || "（無）"}
 使用者最新訊息：
 ${message}
 `;
-
   const text = await generateTextWithFallback(prompt);
-
-  if (text === null) {
-    return {
-      intent: "general_chat",
-      reason: "模型忙碌，先當一般聊天",
-    };
-  }
-
+  if (text === null) return { intent: "general_chat", reason: "模型忙碌，先當一般聊天" };
   try {
     const cleaned = text.replace(/```json|```/g, "").trim();
     const parsed = JSON.parse(cleaned);
-
-    if (
-      parsed.intent === "emotional_support" ||
-      parsed.intent === "general_chat" ||
-      parsed.intent === "restaurant_search"
-    ) {
-      return {
-        intent: parsed.intent,
-        reason: parsed.reason || "已完成分類",
-      };
+    if (parsed.intent === "emotional_support" || parsed.intent === "general_chat" || parsed.intent === "restaurant_search") {
+      return { intent: parsed.intent, reason: parsed.reason || "已完成分類" };
     }
-  } catch {
-    // ignore
-  }
-
-  return {
-    intent: "general_chat",
-    reason: "分類失敗，先當一般聊天",
-  };
+  } catch {}
+  return { intent: "general_chat", reason: "分類失敗，先當一般聊天" };
 }
 
 export async function POST(req: NextRequest) {
   try {
     const { message, lat, lng, history = [] } = await req.json();
     const historyText = formatHistory(history);
-
-    // 1) 所有訊息先交給 Gemini 判斷意圖
     const intentResult = await classifyIntent(message, history);
     const intent = intentResult.intent;
 
-    // 2) 如果模型判定是找餐廳，才真的呼叫工具
     if (intent === "restaurant_search") {
       let places: any[] = [];
 
       if (lat && lng) {
         const restaurantRes = await fetch(`${req.nextUrl.origin}/api/restaurants`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            query: message,
-            lat,
-            lng,
-          }),
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: message, lat, lng }),
         });
-
         const restaurantData = await restaurantRes.json();
         places = restaurantData.places ?? [];
       }
@@ -173,64 +116,26 @@ export async function POST(req: NextRequest) {
       if (!places.length) {
         const prompt = `
 ${SYSTEM_PROMPT}
-
-你是一個以情緒支持為主，但具備找餐廳能力的聊天助理。
-只有在使用者明確要求時，才進入找餐廳模式。
-
-對話紀錄：
-${historyText || "（無）"}
-
-使用者最新訊息：
-${message}
-
-情境：
-使用者想找餐廳，但目前沒有順利查到附近店家資料。
-
-請用繁體中文，回覆兩小段：
-1. 先自然回應，不要太像客服
-2. 再溫和說明這次沒有順利找到，建議他換更明確的餐點關鍵字或稍後再試
-請不要太長。
+對話紀錄：${historyText || "（無）"}
+使用者最新訊息：${message}
+情境：使用者想找餐廳，但目前沒有順利查到附近店家資料。
+請用繁體中文，回覆兩小段：1. 先自然回應 2. 溫和說明沒找到，建議換關鍵字或稍後再試。不要太長。
 `;
-
         const text = await generateTextWithFallback(prompt);
-
         if (text === null) {
-          return NextResponse.json({
-            parts: [
-              { text: "我有幫你找找看。" },
-              { text: "但這次沒有順利抓到附近店家，你可以換個更明確的餐點名稱再試一次。" },
-            ],
-            meta: {
-              intent,
-              reason: intentResult.reason,
-            },
-          });
+          return NextResponse.json({ parts: [{ text: "我有幫你找找看。" }, { text: "但這次沒有順利抓到附近店家，你可以換個更明確的餐點名稱再試一次。" }], meta: { intent, reason: intentResult.reason } });
         }
-
-        return NextResponse.json({
-          parts: splitParts(text),
-          meta: {
-            intent,
-            reason: intentResult.reason,
-          },
-        });
+        return NextResponse.json({ parts: splitParts(text), meta: { intent, reason: intentResult.reason } });
       }
 
-      const restaurantSummary = places
-        .slice(0, 4)
-        .map(
-          (p: any, i: number) =>
-            `${i + 1}. ${p.name}｜${p.address ?? ""}｜評分 ${p.rating ?? "N/A"}｜${
-              p.openNow ? "營業中" : "營業狀態未確認"
-            }｜${p.healthTag ?? ""}｜連結：${p.googleMapsLink}`
-        )
-        .join("\n");
+      const restaurantSummary = places.slice(0, 5).map((p: any, i: number) =>
+        `${i + 1}. 店名：${p.name}｜地址：${p.address ?? ""}｜評分：${p.rating ?? "N/A"}｜${p.openNow ? "營業中" : "營業狀態未確認"}｜類型：${p.types?.join(",") ?? ""}｜Google Maps：${p.googleMapsLink}`
+      ).join("\n");
 
       const prompt = `
 ${SYSTEM_PROMPT}
 
 你是一個以情緒支持為主，但具備找餐廳能力的聊天助理。
-請記得：餐廳推薦只是附加功能，語氣仍然要像在陪伴使用者。
 
 對話紀錄：
 ${historyText || "（無）"}
@@ -238,68 +143,73 @@ ${historyText || "（無）"}
 使用者最新訊息：
 ${message}
 
-模型判定這次需要餐廳搜尋。
-找到的店家如下：
+找到的店家（包含便利商店）：
 ${restaurantSummary}
 
-請用繁體中文回覆，規則：
-1. 先一句自然短回覆
-2. 再一句簡短推薦
-3. 列出 2~4 間店，每間格式如下：
+請輸出一個 JSON 物件，格式如下，不要有任何其他文字或 markdown：
+{
+  "intro": "一句自然的開場白",
+  "budget_tip": "想省錢可以考慮哪間或哪個選擇（一句話）",
+  "special_tip": "想吃特別的可以去哪間（一句話）",
+  "restaurants": [
+    {
+      "name": "店名",
+      "mapsUrl": "Google Maps 連結",
+      "rating": 4.2,
+      "isOpen": true,
+      "walkingMinutes": 估算步行分鐘數(數字),
+      "recommendations": [
+        {
+          "item": "推薦餐點名稱（要具體，便利商店要給真實商品名）",
+          "calories": 估算卡路里數字,
+          "protein": 估算蛋白質公克數字,
+          "fat": 估算脂肪公克數字,
+          "carbs": 估算碳水公克數字,
+          "price": 估算價格數字
+        }
+      ]
+    }
+  ]
+}
 
-**店名**
-🚶 步行約 X 分鐘（根據地址與使用者位置估算，每500公尺約4分鐘）
-⭐ 評分｜營業狀態
-🥗 健康推薦點法：列出 1~2 種這間店適合的健康餐點組合（例如：烤雞腿+沙拉、豆漿+蛋餅）
-🔥 估計熱量：XXX kcal｜蛋白質 XXg｜脂肪 XXg｜碳水 XXg
-💰 估計價位：XX~XX 元
-<a href="對應連結" target="_blank" rel="noopener noreferrer">在 Google Maps 開啟</a>
-
-4. 營養數字請根據餐廳類型與台灣飲食習慣合理估算
-5. 價位請根據台灣一般行情估算
-6. 步行時間請根據店家地址與使用者大概位置估算，若無法判斷就寫「步行約 5~10 分鐘」
-7. 語氣自然，不要像報表
+規則：
+- 每間店給 1~2 個推薦餐點
+- 便利商店（7-11、全家、萊爾富、OK）要給真實商品名稱和盡量準確的營養數據
+- walkingMinutes 根據地址估算，每 500 公尺約 4 分鐘，如果無法判斷就給 5
+- 營養數字請合理估算，便利商店商品盡量準確
+- 價格單位是台幣，便利商店商品給真實售價
+- 只輸出 JSON，不要任何說明文字
 `;
 
       const text = await generateTextWithFallback(prompt);
 
       if (text === null) {
-        const cardsText = places
-          .slice(0, 4)
-          .map(
-            (p: any, i: number) =>
-              `${i + 1}. ${p.name}
-${p.openNow ? "🟢 營業中" : "⚪ 營業狀態未確認"}｜⭐ ${p.rating ?? "N/A"}｜${p.healthTag ?? ""}
-<a href="${p.googleMapsLink}" target="_blank" rel="noopener noreferrer">在 Google Maps 開啟</a>`
-          )
-          .join("\n\n");
-
         return NextResponse.json({
-          parts: [
-            { text: "我幫你找到幾個附近的選項。" },
-            { text: "你可以先看看這幾間，再告訴我你比較想吃哪一種。" },
-            { text: cardsText },
-          ],
-          meta: {
-            intent,
-            reason: intentResult.reason,
-          },
+          parts: [{ text: "我幫你找到幾個附近的選項，但這次沒辦法詳細整理，你可以稍後再試。" }],
+          meta: { intent, reason: intentResult.reason },
         });
       }
 
-      return NextResponse.json({
-        parts: splitParts(text),
-        meta: {
-          intent,
-          reason: intentResult.reason,
-        },
-      });
+      // 嘗試解析 JSON，成功就回傳 restaurantCards 格式
+      try {
+        const cleaned = text.replace(/```json|```/g, "").trim();
+        const parsed = JSON.parse(cleaned);
+        return NextResponse.json({
+          restaurantCards: parsed,
+          meta: { intent, reason: intentResult.reason },
+        });
+      } catch {
+        // JSON 解析失敗就回傳純文字
+        return NextResponse.json({
+          parts: splitParts(text),
+          meta: { intent, reason: intentResult.reason },
+        });
+      }
     }
 
-    // 3) 情緒支持 / 一般聊天都走主聊天流程
+    // 情緒支持 / 一般聊天
     const prompt = `
 ${SYSTEM_PROMPT}
-
 你是一個以情緒支持為主的聊天助理。
 找餐廳只是附加功能，除非使用者明確要求，否則不要主動進入找餐廳模式。
 
@@ -321,31 +231,15 @@ ${message}
 `;
 
     const text = await generateTextWithFallback(prompt);
-
     if (text === null) {
       return NextResponse.json({
-        parts: [
-          { text: "我在。" },
-          { text: "你可以慢慢說，我有在看你剛剛講的內容。" },
-        ],
-        meta: {
-          intent,
-          reason: intentResult.reason,
-        },
+        parts: [{ text: "我在。" }, { text: "你可以慢慢說，我有在看你剛剛講的內容。" }],
+        meta: { intent, reason: intentResult.reason },
       });
     }
+    return NextResponse.json({ parts: splitParts(text), meta: { intent, reason: intentResult.reason } });
 
-    return NextResponse.json({
-      parts: splitParts(text),
-      meta: {
-        intent,
-        reason: intentResult.reason,
-      },
-    });
   } catch (error: any) {
-    return NextResponse.json(
-      { error: error.message ?? "Chat error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: error.message ?? "Chat error" }, { status: 500 });
   }
 }
