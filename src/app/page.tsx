@@ -4,7 +4,7 @@ import { useRef, useState, useEffect } from "react";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
-import { addFoodEntry } from "@/lib/foodStore";
+import { addFoodEntry, getTodaySummary } from "@/lib/foodStore";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Message = {
@@ -444,12 +444,16 @@ export default function HomePage() {
     setLoading(true);
 
     try {
+      const todaySummary = getTodaySummary();
+      const dietContext = todaySummary.entries.length > 0
+        ? `今日攝取 ${Math.round(todaySummary.totalCalories)} kcal，蛋白質 ${Math.round(todaySummary.totalProtein)}g，脂肪 ${Math.round(todaySummary.totalFat)}g，碳水 ${Math.round(todaySummary.totalCarbs)}g，共 ${todaySummary.entries.length} 筆紀錄`
+        : "";
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: userText, lat: latRef.current, lng: lngRef.current, history: historyToSend }),
+        body: JSON.stringify({ message: userText, lat: latRef.current, lng: lngRef.current, history: historyToSend, dietContext }),
       });
-      const data = await res.json();
+        const data = await res.json();
 
       if (data.restaurantCards) {
         addMessage("assistant", "", { restaurantCards: data.restaurantCards });
