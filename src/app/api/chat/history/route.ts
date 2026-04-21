@@ -8,7 +8,7 @@ type HistoryMessage = {
 };
 
 type IntentResult = {
-  intent: "emotional_support" | "general_chat" | "restaurant_search" | "food_recommendation" | "drink_recommendation";
+  intent: "emotional_support" | "general_chat" | "restaurant_search" | "food_recommendation" | "drink_recommendation" | "gratitude_chat";
   reason: string;
 };
 
@@ -34,7 +34,6 @@ async function generateTextWithFallback(prompt: string) {
   }
 }
 
-// Streaming 版本
 async function generateTextStream(prompt: string): Promise<ReadableStream<Uint8Array>> {
   const encoder = new TextEncoder();
   return new ReadableStream({
@@ -49,7 +48,6 @@ async function generateTextStream(prompt: string): Promise<ReadableStream<Uint8A
           if (text) controller.enqueue(encoder.encode(text));
         }
       } catch {
-        // fallback to non-streaming
         const text = await generateTextWithFallback(prompt) ?? "我在。你可以慢慢說。";
         controller.enqueue(encoder.encode(text));
       }
@@ -66,7 +64,9 @@ function splitParts(text: string) {
   return text.split(/\n+/).map((s) => s.trim()).filter(Boolean).map((s) => ({ text: s }));
 }
 
-async function classifyIntent(message: string, history: HistoryMessage[] = []): Promise<IntentResult> {
+async function classifyIntent(message: string, history: HistoryMessage[] = [], isGratitudeMode = false): Promise<IntentResult> {
+  if (isGratitudeMode) return { intent: "gratitude_chat", reason: "感恩日記模式" };
+
   const historyText = formatHistory(history);
   const prompt = `
 你是一個對話意圖分類器。根據使用者最新訊息與對話上下文，判斷主要意圖。
@@ -77,14 +77,15 @@ async function classifyIntent(message: string, history: HistoryMessage[] = []): 
 - restaurant_search
 - food_recommendation
 - drink_recommendation
+- gratitude_chat
 
 判斷原則：
 1. 表達疲累、壓力、罪惡感、自責、低落 → emotional_support
 2. 寒暄、追問、澄清、延續聊天 → general_chat
-3. 明確要找附近店家、搜尋餐廳、查還有開的店 → restaurant_search
-4. 問「我可以吃什麼」「推薦我吃什麼」「今天吃什麼好」「想吃健康的」→ food_recommendation
-5. 問「可以喝什麼」「推薦飲料」「附近飲料店」「想喝什麼」→ drink_recommendation
-6. 只提到食物不代表要找餐廳
+3. 明確要找附近店家、搜尋餐廳 → restaurant_search
+4. 問「我可以吃什麼」「推薦我吃什麼」→ food_recommendation
+5. 問「可以喝什麼」「推薦飲料」→ drink_recommendation
+6. 提到感恩、感謝、今天開心的事、想感謝誰 → gratitude_chat
 
 請只輸出 JSON：
 {"intent":"...","reason":"簡短中文原因，不超過30字"}
@@ -100,22 +101,75 @@ ${message}
   try {
     const cleaned = text.replace(/```json|```/g, "").trim();
     const parsed = JSON.parse(cleaned);
-    const validIntents = ["emotional_support", "general_chat", "restaurant_search", "food_recommendation", "drink_recommendation"];
+    const validIntents = ["emotional_support", "general_chat", "restaurant_search", "food_recommendation", "drink_recommendation", "gratitude_chat"];
     if (validIntents.includes(parsed.intent)) return { intent: parsed.intent, reason: parsed.reason || "已完成分類" };
   } catch {}
   return { intent: "general_chat", reason: "分類失敗" };
 }
 
+const GRATITUDE_PERSONA = `
+你是一個活潑、真誠的大學生朋友，用一種mindful的方式傾聽對方。
+回應簡短不囉嗦，語氣自然放鬆、像朋友聊天，不要正式。
+不要給建議、不要分析、不要評判。
+根據對方分享的內容，幫助他們探索情緒、經歷、生活變化、人際關係或感謝的源頭。
+自然回應對方說的話，有時候延伸話題，但避免重複對方的用詞。
+避免重複的開場白、制式化的表達或通俗祝福語（例如「希望一切順利」）。
+不要用過多形容詞或過於客觀的描述，專注在輕鬆的日常對話。
+每次回應結尾加一個簡短的開放式問題，幫助使用者反思他們提到的感恩事件，鼓勵繼續分享。
+問題要簡單、輕鬆、友善。
+使用繁體中文。
+`.trim();
+
 export async function POST(req: NextRequest) {
   try {
-    const { message, lat, lng, history = [], dietContext = "" } = await req.json();
+    const { message, lat, lng, history = [], dietContext = "", isGratitudeMode = false, gratitudeStep = 0 } = await req.json();
     const historyText = formatHistory(history);
-    const intentResult = await classifyIntent(message, history);
+    const intentResult = await classifyIntent(message, history, isGratitudeMode);
     const intent = intentResult.intent;
 
     const dietInfo = dietContext
       ? `使用者今日飲食狀況：${dietContext}`
       : "今日尚無飲食紀錄（可能還沒記錄）";
+
+    // ===== gratitude_chat =====
+    if (intent === "gratitude_chat" || isGratitudeMode) {
+      let systemPrompt = "";
+
+      if (gratitudeStep === 0 && !message) {
+        // AI 主動開口
+        systemPrompt = `${GRATITUDE_PERSONA}
+
+現在主動開口詢問使用者今天有什麼想感謝的事。
+語氣輕鬆自然，像朋友傍晚聊天一樣，不要太正式。
+一句話就好，結尾加一個開放式問題。`;
+      } else if (message.includes("記錄") || message.includes("存") || message.includes("好了") || message.includes("就這樣")) {
+        // 使用者要儲存
+        return NextResponse.json({
+          gratitudeSave: true,
+          text: "好，幫你記下來了 🌸 今天分享的這些，等你以後翻出來看，應該會覺得很溫暖。",
+          meta: { intent: "gratitude_chat" }
+        });
+      } else {
+        // 正常感恩對話
+        systemPrompt = `${GRATITUDE_PERSONA}
+
+對話紀錄：
+${historyText || "（無）"}
+
+使用者說：「${message}」
+
+請自然回應，並在結尾加一個輕鬆的反問。回應要簡短，2~3句話就好。`;
+      }
+
+      const stream = await generateTextStream(systemPrompt || `${GRATITUDE_PERSONA}\n使用者說：「${message}」\n請自然回應，結尾加一個輕鬆的反問。`);
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "X-Intent": "gratitude_chat",
+          "Transfer-Encoding": "chunked",
+        },
+      });
+    }
 
     // ===== food_recommendation =====
     if (intent === "food_recommendation") {
@@ -217,7 +271,7 @@ ${dietInfo}
       }
     }
 
-    // ===== emotional_support / general_chat — 用 STREAMING =====
+    // ===== emotional_support / general_chat — streaming =====
     const streamPrompt = `
 ${SYSTEM_PROMPT}
 你是一個以情緒支持為主的聊天助理。
@@ -228,10 +282,9 @@ ${dietInfo}
 請用繁體中文自然回覆：
 1. emotional_support：先同理，接住情緒，不要急著給解法
 2. general_chat：自然延續上下文
-3. 如果使用者問今天還可以吃多少、熱量還剩多少、今天吃了什麼，根據今日飲食狀況直接給具體數字
+3. 如果使用者問今天還可以吃多少、熱量還剩多少，根據今日飲食狀況直接給具體數字
 4. 回覆 1~2 小段，不要太長，不要像客服
 `;
-
     const stream = await generateTextStream(streamPrompt);
     return new Response(stream, {
       headers: {

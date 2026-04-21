@@ -7,11 +7,8 @@ import rehypeRaw from "rehype-raw";
 import { addFoodEntry, getTodaySummary } from "@/lib/foodStore";
 import { getZooState, getAnimalEmoji, getWeekKey, HatchedAnimal, getAnimalDef } from "@/lib/animalStore";
 import { startNotificationScheduler } from "@/lib/notification";
-useEffect(() => {
-  startNotificationScheduler();
-}, []);
+import { saveGratitude, getTodayGratitude } from "@/lib/gratitudeStore";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
 type Message = {
   id: string;
   role: "user" | "assistant";
@@ -20,6 +17,8 @@ type Message = {
   restaurantCards?: RestaurantCardsData;
   foodRecommendation?: FoodRecommendationData;
   drinkRecommendation?: DrinkRecommendationData;
+  isGratitude?: boolean;
+  showRecordBtn?: boolean; // 顯示「記錄這件事」按鈕
 };
 
 type RestaurantRecommendation = { item: string; calories: number; protein: number; fat: number; carbs: number; price: number; };
@@ -74,130 +73,82 @@ function detectFoodsInMessage(text: string): string[] {
   return [...found];
 }
 
-// ── Zoo Background SVG ────────────────────────────────────────────────────────
+// ── Zoo Background ────────────────────────────────────────────────────────────
 function ZooBackground({ animals }: { animals: HatchedAnimal[] }) {
   const completed = animals.filter((a) => a.stage === 4).slice(-6);
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 0, pointerEvents: "none", overflow: "hidden" }}>
-      <svg width="100%" height="100%" viewBox="0 0 480 850" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
-        {/* Sky gradient */}
+      <svg width="100%" height="100%" viewBox="0 0 390 844" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#f0f8e8" />
-            <stop offset="100%" stopColor="#faf7f5" />
+            <stop offset="0%" stopColor="#e8f5d0" />
+            <stop offset="100%" stopColor="#f5fce8" />
           </linearGradient>
           <linearGradient id="grass" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#c8e8a0" />
             <stop offset="100%" stopColor="#a8d880" />
           </linearGradient>
         </defs>
-        <rect width="480" height="850" fill="url(#sky)" />
-
-        {/* Clouds */}
-        <g opacity="0.5">
-          <ellipse cx="80" cy="60" rx="50" ry="20" fill="white" />
-          <ellipse cx="110" cy="50" rx="35" ry="22" fill="white" />
-          <ellipse cx="55" cy="55" rx="30" ry="16" fill="white" />
-
-          <ellipse cx="360" cy="80" rx="45" ry="18" fill="white" />
-          <ellipse cx="390" cy="68" rx="30" ry="20" fill="white" />
-          <ellipse cx="335" cy="74" rx="28" ry="14" fill="white" />
+        <rect width="390" height="844" fill="url(#sky)" />
+        <circle cx="50" cy="60" r="28" fill="#ffe080" opacity="0.5" />
+        <circle cx="50" cy="60" r="19" fill="#ffd060" opacity="0.6" />
+        <g opacity="0.6">
+          <ellipse cx="180" cy="50" rx="50" ry="20" fill="white" />
+          <ellipse cx="212" cy="40" rx="34" ry="22" fill="white" />
+          <ellipse cx="150" cy="46" rx="28" ry="16" fill="white" />
+          <ellipse cx="320" cy="75" rx="38" ry="16" fill="white" />
+          <ellipse cx="348" cy="65" rx="25" ry="18" fill="white" />
         </g>
-
-        {/* Far trees (background) */}
-        <g opacity="0.3" fill="#7ab840">
-          <ellipse cx="30" cy="200" rx="22" ry="30" />
-          <rect x="26" y="225" width="8" height="20" fill="#8b6f3a" />
-          <ellipse cx="450" cy="180" rx="25" ry="32" />
-          <rect x="446" y="207" width="8" height="20" fill="#8b6f3a" />
-          <ellipse cx="220" cy="150" rx="18" ry="25" />
-          <rect x="216" y="172" width="7" height="16" fill="#8b6f3a" />
-        </g>
-
-        {/* Ground */}
-        <rect x="0" y="780" width="480" height="70" fill="url(#grass)" opacity="0.6" />
-        {/* Ground wave */}
-        <path d="M0 790 Q120 775 240 790 Q360 805 480 790 L480 850 L0 850 Z" fill="#b8dc88" opacity="0.5" />
-
-        {/* Fence */}
+        <rect x="0" y="700" width="390" height="144" fill="url(#grass)" opacity="0.6" />
+        <path d="M0 710 Q97 697 195 710 Q293 723 390 710 L390 844 L0 844 Z" fill="#b8dc88" opacity="0.5" />
         <g stroke="#c8a060" strokeWidth="2" opacity="0.4" fill="#e8c880">
-          {[20, 60, 100, 140, 180, 220, 260, 300, 340, 380, 420, 460].map((x) => (
+          {[10,48,86,124,162,200,238,276,314,352].map((x: number) => (
             <g key={x}>
-              <rect x={x} y="775" width="10" height="25" rx="2" />
-              <polygon points={`${x + 5},770 ${x},776 ${x + 10},776`} />
+              <rect x={x} y="703" width="9" height="20" rx="2" />
+              <polygon points={`${x+4.5},698 ${x},704 ${x+9},704`} />
             </g>
           ))}
-          <line x1="0" y1="783" x2="480" y2="783" strokeWidth="2.5" />
-          <line x1="0" y1="792" x2="480" y2="792" strokeWidth="2" />
+          <line x1="0" y1="710" x2="390" y2="710" strokeWidth="2.5" />
+          <line x1="0" y1="717" x2="390" y2="717" strokeWidth="2" />
         </g>
-
-        {/* Trees */}
-        <g>
-          {/* Left tree */}
-          <rect x="22" y="680" width="16" height="110" fill="#8b6f3a" opacity="0.7" />
-          <ellipse cx="30" cy="660" rx="38" ry="50" fill="#5a9e30" opacity="0.6" />
-          <ellipse cx="30" cy="640" rx="28" ry="38" fill="#6ab840" opacity="0.6" />
-
-          {/* Right tree */}
-          <rect x="432" y="690" width="16" height="100" fill="#8b6f3a" opacity="0.7" />
-          <ellipse cx="440" cy="668" rx="38" ry="48" fill="#5a9e30" opacity="0.6" />
-          <ellipse cx="440" cy="648" rx="28" ry="36" fill="#6ab840" opacity="0.6" />
-
-          {/* Mid-left small tree */}
-          <rect x="100" y="720" width="10" height="65" fill="#8b6f3a" opacity="0.5" />
-          <ellipse cx="105" cy="705" rx="24" ry="32" fill="#6ab840" opacity="0.5" />
-
-          {/* Mid-right small tree */}
-          <rect x="365" y="715" width="10" height="70" fill="#8b6f3a" opacity="0.5" />
-          <ellipse cx="370" cy="698" rx="24" ry="33" fill="#5a9e30" opacity="0.5" />
-        </g>
-
-        {/* Bushes */}
+        <rect x="14" y="610" width="14" height="100" fill="#8b6f3a" opacity="0.7" />
+        <ellipse cx="21" cy="592" rx="32" ry="44" fill="#5a9e30" opacity="0.6" />
+        <ellipse cx="21" cy="572" rx="23" ry="33" fill="#6ab840" opacity="0.6" />
+        <rect x="360" y="618" width="14" height="92" fill="#8b6f3a" opacity="0.7" />
+        <ellipse cx="367" cy="600" rx="32" ry="42" fill="#5a9e30" opacity="0.6" />
+        <ellipse cx="367" cy="580" rx="23" ry="32" fill="#6ab840" opacity="0.6" />
+        <rect x="82" y="648" width="9" height="58" fill="#8b6f3a" opacity="0.5" />
+        <ellipse cx="87" cy="636" rx="20" ry="28" fill="#6ab840" opacity="0.5" />
+        <rect x="298" y="644" width="9" height="62" fill="#8b6f3a" opacity="0.5" />
+        <ellipse cx="303" cy="631" rx="20" ry="29" fill="#5a9e30" opacity="0.5" />
         <g opacity="0.45">
-          <ellipse cx="170" cy="782" rx="30" ry="14" fill="#7ab840" />
-          <ellipse cx="310" cy="778" rx="28" ry="13" fill="#6aae30" />
-          <ellipse cx="80" cy="784" rx="20" ry="10" fill="#8ac850" />
-          <ellipse cx="400" cy="782" rx="22" ry="11" fill="#7ab840" />
+          <ellipse cx="140" cy="708" rx="25" ry="11" fill="#7ab840" />
+          <ellipse cx="255" cy="705" rx="23" ry="10" fill="#6aae30" />
+          <ellipse cx="65" cy="710" rx="16" ry="8" fill="#8ac850" />
+          <ellipse cx="330" cy="708" rx="18" ry="9" fill="#7ab840" />
         </g>
-
-        {/* Flowers */}
-        <g opacity="0.5">
-          {[[140, 788], [200, 785], [260, 787], [330, 786], [380, 789]].map(([x, y], i) => (
+        <g opacity="0.6">
+          {([[115,714],[170,711],[220,713],[275,712],[320,715]] as [number,number][]).map(([x,y],i) => (
             <g key={i}>
-              <circle cx={x} cy={y} r="4" fill={["#f090a0", "#f0b060", "#c090e0", "#80c0f0", "#f0d060"][i]} />
-              <line x1={x} y1={y + 4} x2={x} y2={y + 12} stroke="#70a040" strokeWidth="1.5" />
+              <circle cx={x} cy={y} r="3.5" fill={["#f090a0","#f0b060","#c090e0","#80c0f0","#f0d060"][i]} />
+              <line x1={x} y1={y+3} x2={x} y2={y+9} stroke="#70a040" strokeWidth="1.5" />
             </g>
           ))}
         </g>
-
-        {/* Animal enclosures (small circles on ground) */}
         {completed.map((animal, i) => {
-          const positions = [[150, 758], [240, 755], [330, 758], [180, 768], [270, 765], [210, 760]];
-          const [x, y] = positions[i] ?? [200 + i * 40, 760];
-          const emoji = getAnimalEmoji(animal);
+          const positions: [number,number][] = [[100,692],[165,689],[230,692],[130,699],[195,697],[260,695]];
+          const [x,y] = positions[i] ?? [150+i*40, 692];
           return (
             <g key={animal.id}>
-              <ellipse cx={x} cy={y + 8} rx="18" ry="6" fill="rgba(0,0,0,0.08)" />
-              <text x={x} y={y} textAnchor="middle" fontSize="20" style={{ userSelect: "none" }}>{emoji}</text>
+              <ellipse cx={x} cy={y+9} rx="14" ry="5" fill="rgba(0,0,0,0.07)" />
+              <text x={x} y={y} textAnchor="middle" fontSize="20" style={{userSelect:"none"}}>{getAnimalEmoji(animal)}</text>
             </g>
           );
         })}
-
-        {/* Current week egg floating */}
-        <text x="240" y="730" textAnchor="middle" fontSize="28" opacity="0.6"
-          style={{ animation: "float 3s ease-in-out infinite", userSelect: "none" }}>🥚</text>
-
-        {/* Sun */}
-        <circle cx="420" cy="50" r="28" fill="#ffd060" opacity="0.4" />
-        <circle cx="420" cy="50" r="20" fill="#ffe080" opacity="0.5" />
+        <text x="195" y="672" textAnchor="middle" fontSize="28" opacity="0.7"
+          style={{animation:"float 3s ease-in-out infinite", userSelect:"none"}}>🥚</text>
       </svg>
-
-      <style>{`
-        @keyframes float {
-          0%, 100% { transform: translateY(0px); }
-          50% { transform: translateY(-8px); }
-        }
-      `}</style>
+      <style>{"@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}"}</style>
     </div>
   );
 }
@@ -231,8 +182,7 @@ function FoodChips({ foods, onSave }: { foods: string[]; onSave: (f: string) => 
   const [saved, setSaved] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState<Set<string>>(new Set());
   async function save(f: string) {
-    setSaving((s) => new Set(s).add(f));
-    await onSave(f);
+    setSaving((s) => new Set(s).add(f)); await onSave(f);
     setSaving((s) => { const n = new Set(s); n.delete(f); return n; });
     setSaved((s) => new Set(s).add(f));
   }
@@ -240,21 +190,17 @@ function FoodChips({ foods, onSave }: { foods: string[]; onSave: (f: string) => 
   return (
     <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 6 }}>
       {foods.map((f) => (
-        <button key={f} onClick={() => save(f)} disabled={saved.has(f) || saving.has(f)} style={{
-          padding: "4px 12px", borderRadius: 20,
-          border: "0.5px solid rgba(90,158,48,0.4)",
+        <button key={f} onClick={() => save(f)} disabled={saved.has(f)||saving.has(f)} style={{
+          padding: "4px 12px", borderRadius: 20, border: "0.5px solid rgba(90,158,48,0.4)",
           background: saved.has(f) ? "rgba(90,158,48,0.1)" : "rgba(255,255,255,0.75)",
-          backdropFilter: "blur(10px)",
-          color: saved.has(f) ? "#80b060" : "#5a9e30",
-          fontSize: 12, cursor: (saved.has(f) || saving.has(f)) ? "default" : "pointer",
+          backdropFilter: "blur(10px)", color: saved.has(f) ? "#80b060" : "#5a9e30",
+          fontSize: 12, cursor: (saved.has(f)||saving.has(f)) ? "default" : "pointer",
           fontFamily: "inherit", transition: "all 0.15s",
         }}>
           {saved.has(f) ? "✓" : saving.has(f) ? "估算中…" : "+"} {f}
         </button>
       ))}
-      {foods.some((f) => !saved.has(f) && !saving.has(f)) && (
-        <span style={{ fontSize: 10, color: "#b0c8a0" }}>點擊記錄到日記</span>
-      )}
+      {foods.some((f) => !saved.has(f)&&!saving.has(f)) && <span style={{ fontSize: 10, color: "#b0c8a0" }}>點擊記錄到日記</span>}
     </div>
   );
 }
@@ -377,11 +323,15 @@ export default function HomePage() {
   const [toast, setToast] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [zooAnimals, setZooAnimals] = useState<HatchedAnimal[]>([]);
+  const [gratitudeMode, setGratitudeMode] = useState(false);
+  const [gratitudeItems, setGratitudeItems] = useState<string[]>([]);
+  const [pendingGratitudeText, setPendingGratitudeText] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastSendTimeRef = useRef(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const latRef = useRef<number | null>(null);
   const lngRef = useRef<number | null>(null);
+  const isComposingRef = useRef(false);
 
   useEffect(() => {
     setMessages(loadMessages());
@@ -391,11 +341,14 @@ export default function HomePage() {
   }, []);
   useEffect(() => { if (hydrated) saveMessages(messages); }, [messages, hydrated]);
   useEffect(() => { if (hydrated) setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "auto" }), 50); }, [hydrated]);
+  useEffect(() => { startNotificationScheduler(); }, []);
 
   const addMessage = (role: "user" | "assistant", text: string, extras?: Partial<Message>) => {
     setMessages((prev) => [...prev, { id: crypto.randomUUID(), role, text, ...extras }]);
     setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
   };
+
+  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
 
   const getLocation = () => {
     navigator.geolocation.getCurrentPosition(
@@ -408,8 +361,6 @@ export default function HomePage() {
     );
   };
 
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
-
   const saveFood = async (foodName: string) => {
     showToast(`正在估算「${foodName}」的營養…`);
     try {
@@ -417,26 +368,116 @@ export default function HomePage() {
       const data = await res.json();
       if (data.calories !== undefined) {
         addFoodEntry({ name: foodName, meal: currentMeal(), source: "chat", calories: data.calories, protein: data.protein, fat: data.fat, carbs: data.carbs });
-        showToast(`✓ ${foodName} — ${data.calories} kcal 已記錄`);
+        showToast(`✓ ${foodName} 已記錄`);
       } else { addFoodEntry({ name: foodName, meal: currentMeal(), source: "chat" }); showToast(`✓ 已記錄「${foodName}」`); }
     } catch { addFoodEntry({ name: foodName, meal: currentMeal(), source: "chat" }); showToast(`✓ 已記錄「${foodName}」`); }
   };
 
   const saveFoodItem = async (item: FoodItem) => {
     addFoodEntry({ name: item.name, meal: currentMeal(), source: "chat", calories: item.calories, protein: item.protein, fat: item.fat, carbs: item.carbs });
-    showToast(`✓ ${item.name} — ${item.calories} kcal 已記錄`);
+    showToast(`✓ ${item.name} 已記錄`);
   };
   const saveDrinkItem = async (shopName: string, item: DrinkItem) => {
     addFoodEntry({ name: `${item.name}（${shopName}）`, meal: currentMeal(), source: "chat", calories: item.calories });
-    showToast(`✓ ${item.name} — ${item.calories} kcal 已記錄`);
+    showToast(`✓ ${item.name} 已記錄`);
   };
   const saveRestaurantFood = async (restaurantName: string, rec: RestaurantRecommendation) => {
     addFoodEntry({ name: `${rec.item}（${restaurantName}）`, meal: currentMeal(), source: "chat", calories: rec.calories, protein: rec.protein, fat: rec.fat, carbs: rec.carbs });
-    showToast(`✓ ${rec.item} — ${rec.calories} kcal 已記錄`);
+    showToast(`✓ ${rec.item} 已記錄`);
   };
 
+  // ── 感恩日記模式 ──────────────────────────────────────────────────────────
+  const callGratitudeAPI = async (userMessage: string, historyMsgs: Message[]) => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: userMessage, isGratitudeMode: true, history: historyMsgs.filter((m) => m.text && m.text.trim()).map((m) => ({ role: m.role, text: m.text })).slice(-10) }),
+      });
+      if (!res.body) { setLoading(false); return; }
+      const streamId = crypto.randomUUID();
+      setMessages((prev) => [...prev, { id: streamId, role: "assistant" as const, text: "", isGratitude: true, showRecordBtn: false }]);
+      setLoading(false);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulated = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        accumulated += decoder.decode(value, { stream: true });
+        const cur = accumulated;
+        setMessages((prev) => prev.map((m) => m.id === streamId ? { ...m, text: cur } : m));
+      }
+      // Show record button after streaming done
+      setMessages((prev) => prev.map((m) => m.id === streamId ? { ...m, showRecordBtn: true } : m));
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+    } catch { setLoading(false); }
+  };
+
+  const startGratitudeMode = async () => {
+    setGratitudeMode(true);
+    setGratitudeItems([]);
+    await callGratitudeAPI("", []);
+  };
+
+  const recordGratitudeItem = (msgId: string) => {
+    // Find the last user message in gratitude mode
+    const userMsgs = messages.filter((m) => m.role === "user" && m.isGratitude);
+    const lastUserMsg = userMsgs[userMsgs.length - 1];
+    if (!lastUserMsg) return;
+
+    const newItems = [...gratitudeItems, lastUserMsg.text];
+    setGratitudeItems(newItems);
+
+    // Hide record button on this message
+    setMessages((prev) => prev.map((m) => m.id === msgId ? { ...m, showRecordBtn: false } : m));
+
+    if (newItems.length >= 3) {
+      // 已記錄三件，自動結束
+      const items: [string, string, string] = [newItems[0], newItems[1] ?? "—", newItems[2] ?? "—"];
+      saveGratitude(items);
+      addMessage("assistant", `今天記了三件感謝的事 🌸 很棒，明天翻出來看應該會很溫暖。`, { isGratitude: false });
+      setGratitudeMode(false);
+      showToast("感恩日記已儲存 🌸");
+    } else {
+      // 問下一件
+      const count = newItems.length;
+      const nextMsg = count === 1 ? `記下來了 ✓ 還有第 ${count + 1} 件想分享的嗎？` : `也記下來了 ✓ 還有想說的嗎？`;
+      addMessage("assistant", nextMsg, { isGratitude: true });
+    }
+  };
+
+  const finishGratitude = () => {
+    if (gratitudeItems.length === 0) {
+      setGratitudeMode(false);
+      return;
+    }
+    const items: [string, string, string] = [
+      gratitudeItems[0] ?? "—",
+      gratitudeItems[1] ?? "—",
+      gratitudeItems[2] ?? "—",
+    ];
+    saveGratitude(items);
+    addMessage("assistant", `好，幫你記下來了 🌸 今天分享的這些，等以後翻出來看應該會很溫暖。`, { isGratitude: false });
+    setGratitudeMode(false);
+    showToast("感恩日記已儲存 🌸");
+  };
+
+  // ── 一般送訊息 ────────────────────────────────────────────────────────────
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
+    if (gratitudeMode) {
+      const userText = input.trim();
+      setInput("");
+      const textarea = document.querySelector('.input-field') as HTMLTextAreaElement;
+      if (textarea) { textarea.style.height = "auto"; }
+      const userMsgId = crypto.randomUUID();
+      setMessages((prev) => [...prev, { id: userMsgId, role: "user", text: userText, isGratitude: true }]);
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+      await callGratitudeAPI(userText, [...messages, { id: userMsgId, role: "user", text: userText, isGratitude: true }]);
+      return;
+    }
+
     const now = Date.now();
     if (now - lastSendTimeRef.current < 1200) return;
     lastSendTimeRef.current = now;
@@ -477,8 +518,8 @@ export default function HomePage() {
         const { done, value } = await reader.read();
         if (done) break;
         accumulated += decoder.decode(value, { stream: true });
-        const current = accumulated;
-        setMessages((prev) => prev.map((m) => m.id === streamId ? { ...m, text: current } : m));
+        const cur = accumulated;
+        setMessages((prev) => prev.map((m) => m.id === streamId ? { ...m, text: cur } : m));
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 10);
       }
     } catch { addMessage("assistant", "剛剛出了點問題，你可以再試一次。"); }
@@ -505,11 +546,20 @@ export default function HomePage() {
     if (msg.foodRecommendation) return <FoodRecommendationCards data={msg.foodRecommendation} onSave={saveFoodItem} />;
     if (msg.drinkRecommendation) return <DrinkRecommendationCards data={msg.drinkRecommendation} onSave={saveDrinkItem} />;
     return (
-      <div className="bubble-bot">
-        <ReactMarkdown rehypePlugins={[rehypeRaw]} components={{
-          a: ({ ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
-          p: ({ children }) => <p>{children}</p>,
-        }}>{msg.text}</ReactMarkdown>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8, maxWidth: "88%" }}>
+        <div className={msg.isGratitude ? "bubble-gratitude" : "bubble-bot"}>
+          <ReactMarkdown rehypePlugins={[rehypeRaw]} components={{
+            a: ({ ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+            p: ({ children }) => <p>{children}</p>,
+          }}>{msg.text}</ReactMarkdown>
+        </div>
+        {msg.isGratitude && msg.showRecordBtn && msg.text && (
+          <button onClick={() => recordGratitudeItem(msg.id)} style={{
+            padding: "6px 16px", borderRadius: 16, fontSize: 12,
+            background: "rgba(255,183,77,0.15)", border: "0.5px solid rgba(255,183,77,0.5)",
+            color: "#a06010", cursor: "pointer", fontFamily: "inherit",
+          }}>記錄這件事 ✓</button>
+        )}
       </div>
     );
   };
@@ -520,102 +570,126 @@ export default function HomePage() {
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500&family=DM+Serif+Display:ital@0;1&display=swap');
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
         html, body { height: 100%; overflow: hidden; }
-        body { font-family: 'Noto Sans TC', sans-serif; background: #f0f8e8; }
-        .shell { position: relative; z-index: 1; max-width: 480px; margin: 0 auto; height: 100dvh; display: flex; flex-direction: column; }
-        .hdr { padding: 52px 20px 14px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
-        .hdr-left { display: flex; flex-direction: column; gap: 2px; }
-        .hdr-title { font-family: 'DM Serif Display', serif; font-size: 22px; color: #2d4a1e; }
-        .hdr-sub { font-size: 12px; color: #88a870; }
-        .nav-btns { display: flex; gap: 8px; }
-        .nav-btn { display: flex; align-items: center; gap: 5px; padding: 7px 12px; border-radius: 20px; background: rgba(255,255,255,0.7); border: 0.5px solid rgba(160,210,100,0.4); font-size: 12px; font-weight: 500; text-decoration: none; transition: background 0.15s; backdrop-filter: blur(8px); }
-        .nav-btn-green { color: #5a9e30; }
-        .nav-btn-green:hover { background: rgba(200,240,160,0.5); }
-        .nav-btn-purple { color: #7a5a9a; }
-        .nav-btn-purple:hover { background: rgba(200,180,240,0.3); }
-        .msgs { flex: 1; overflow-y: auto; padding: 8px 20px 12px; display: flex; flex-direction: column; gap: 14px; scrollbar-width: none; }
+        body { font-family: 'Noto Sans TC', sans-serif; background: #e8f5d0; }
+        .page-root { position: relative; width: 100%; height: 100dvh; display: flex; flex-direction: column; align-items: center; }
+        .top-nav { position: relative; z-index: 10; width: 100%; max-width: 480px; padding: 52px 20px 12px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+        .app-title { font-family: 'DM Serif Display', serif; font-size: 22px; color: #2d4a1e; }
+        .app-sub { font-size: 11px; color: #88a870; margin-top: 2px; }
+        .nav-btns { display: flex; gap: 6px; }
+        .nav-btn { display: flex; align-items: center; gap: 4px; padding: 6px 11px; border-radius: 20px; background: rgba(255,255,255,0.75); border: 0.5px solid rgba(160,210,100,0.5); font-size: 11px; font-weight: 500; text-decoration: none; transition: background 0.15s; backdrop-filter: blur(8px); }
+        .nav-btn-green { color: #5a9e30; } .nav-btn-green:hover { background: rgba(200,240,160,0.6); }
+        .nav-btn-purple { color: #7a5a9a; } .nav-btn-purple:hover { background: rgba(200,180,240,0.4); }
+        .nav-btn-orange { color: #c08060; } .nav-btn-orange:hover { background: rgba(240,160,96,0.25); }
+        .chat-float {
+          position: relative; z-index: 10;
+          width: calc(100% - 32px); max-width: 448px;
+          flex: 1; display: flex; flex-direction: column;
+          margin-bottom: 22vh; margin-left: 16px; margin-right: 16px;
+          min-height: 0;
+          background: rgba(255,255,255,0.72);
+          backdrop-filter: blur(18px);
+          border-radius: 24px;
+          border: 0.5px solid rgba(200,230,160,0.5);
+          box-shadow: 0 8px 40px rgba(90,158,48,0.12);
+          overflow: hidden;
+        }
+        .msgs { flex: 1; overflow-y: auto; padding: 12px 16px 8px; display: flex; flex-direction: column; gap: 12px; scrollbar-width: none; min-height: 0; }
         .msgs::-webkit-scrollbar { display: none; }
         .msg-row-bot { display: flex; flex-direction: column; align-items: flex-start; width: 100%; }
         .msg-row-user { display: flex; flex-direction: column; align-items: flex-end; }
-        .bubble-bot { max-width: 88%; background: rgba(255,255,255,0.78); backdrop-filter: blur(16px); border: 0.5px solid rgba(200,230,160,0.7); border-radius: 4px 20px 20px 20px; padding: 14px 16px; color: #2d4a1e; font-size: 14px; line-height: 1.65; box-shadow: 0 2px 20px rgba(90,158,48,0.08); animation: fadeUp 0.3s ease both; }
-        .bubble-bot p { margin-bottom: 6px; }
-        .bubble-bot p:last-child { margin-bottom: 0; }
+        .bubble-bot { max-width: 100%; background: rgba(255,255,255,0.9); border: 0.5px solid rgba(200,230,160,0.8); border-radius: 4px 18px 18px 18px; padding: 10px 14px; color: #2d4a1e; font-size: 14px; line-height: 1.65; animation: fadeUp 0.3s ease both; }
+        .bubble-bot p { margin-bottom: 6px; } .bubble-bot p:last-child { margin-bottom: 0; }
         .bubble-bot a { color: #5a9e30; text-decoration: underline; }
-        .bubble-user { max-width: 72%; background: rgba(90,158,48,0.12); border-radius: 20px 4px 20px 20px; padding: 11px 16px; color: #2d4a1e; font-size: 14px; line-height: 1.55; animation: fadeUp 0.25s ease both; }
-        .typing { display: flex; gap: 5px; padding: 13px 16px; background: rgba(255,255,255,0.7); backdrop-filter: blur(12px); border: 0.5px solid rgba(200,230,160,0.6); border-radius: 4px 18px 18px 18px; width: fit-content; }
+        .bubble-gratitude { max-width: 100%; background: rgba(255,248,225,0.95); border: 0.5px solid rgba(255,183,77,0.4); border-radius: 4px 18px 18px 18px; padding: 10px 14px; color: #5a3a10; font-size: 14px; line-height: 1.65; animation: fadeUp 0.3s ease both; }
+        .bubble-gratitude p { margin-bottom: 6px; } .bubble-gratitude p:last-child { margin-bottom: 0; }
+        .bubble-user { max-width: 75%; background: rgba(90,158,48,0.13); border-radius: 18px 4px 18px 18px; padding: 10px 14px; color: #2d4a1e; font-size: 14px; line-height: 1.55; animation: fadeUp 0.25s ease both; }
+        .typing { display: flex; gap: 5px; padding: 10px 14px; background: rgba(255,255,255,0.9); border: 0.5px solid rgba(200,230,160,0.6); border-radius: 4px 18px 18px 18px; width: fit-content; }
         .typing span { width: 6px; height: 6px; border-radius: 50%; background: #90c860; animation: bounce 1.2s infinite; }
-        .typing span:nth-child(2) { animation-delay: 0.2s; }
-        .typing span:nth-child(3) { animation-delay: 0.4s; }
-        .bottom { flex-shrink: 0; padding: 8px 20px 32px; background: linear-gradient(to top, rgba(240,248,232,1) 70%, transparent); }
-        .action-row { display: flex; gap: 8px; margin-bottom: 10px; }
-        .action-btn { display: flex; align-items: center; gap: 5px; padding: 7px 14px; border-radius: 20px; background: rgba(255,255,255,0.7); backdrop-filter: blur(10px); border: 0.5px solid rgba(160,210,100,0.4); font-family: 'Noto Sans TC', sans-serif; font-size: 12px; color: #5a9e30; cursor: pointer; transition: background 0.15s; }
-        .action-btn:hover { background: rgba(220,245,190,0.6); }
-        .input-row { display: flex; align-items: flex-end; gap: 10px; background: rgba(255,255,255,0.78); backdrop-filter: blur(20px); border: 0.5px solid rgba(160,210,100,0.5); border-radius: 24px; padding: 10px 10px 10px 18px; box-shadow: 0 4px 24px rgba(90,158,48,0.1); }
-        .input-field { flex: 1; border: none; background: transparent; outline: none; font-family: 'Noto Sans TC', sans-serif; font-size: 14px; color: #2d4a1e; resize: none; min-height: 22px; max-height: 120px; line-height: 1.5; }
+        .typing span:nth-child(2) { animation-delay: 0.2s; } .typing span:nth-child(3) { animation-delay: 0.4s; }
+        .bottom { flex-shrink: 0; padding: 6px 12px 10px; }
+        .gratitude-bar { background: rgba(255,248,225,0.9); border-top: 0.5px solid rgba(255,183,77,0.3); padding: 5px 12px; font-size: 11px; color: #a06010; display: flex; align-items: center; justify-content: space-between; }
+        .action-row { display: flex; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+        .action-btn { display: flex; align-items: center; gap: 4px; padding: 5px 10px; border-radius: 16px; background: rgba(255,255,255,0.8); border: 0.5px solid rgba(160,210,100,0.4); font-family: 'Noto Sans TC', sans-serif; font-size: 11px; color: #5a9e30; cursor: pointer; transition: background 0.15s; }
+        .action-btn:hover { background: rgba(220,245,190,0.7); }
+        .input-row { display: flex; align-items: flex-end; gap: 8px; background: rgba(255,255,255,0.9); border: 0.5px solid rgba(160,210,100,0.5); border-radius: 20px; padding: 8px 8px 8px 14px; }
+        .input-field { flex: 1; border: none; background: transparent; outline: none; font-family: 'Noto Sans TC', sans-serif; font-size: 14px; color: #2d4a1e; resize: none; min-height: 20px; max-height: 80px; line-height: 1.5; }
         .input-field::placeholder { color: #a8c890; }
-        .send-btn { width: 38px; height: 38px; border-radius: 50%; background: #5a9e30; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background 0.15s, transform 0.15s; }
-        .send-btn:hover:not(:disabled) { background: #4a8e20; transform: scale(1.05); }
-        .send-btn:active:not(:disabled) { transform: scale(0.95); }
+        .send-btn { width: 34px; height: 34px; border-radius: 50%; background: #5a9e30; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background 0.15s; }
+        .send-btn:hover:not(:disabled) { background: #4a8e20; }
         .send-btn:disabled { background: #b8d8a0; cursor: default; }
-        .send-btn svg { width: 15px; height: 15px; }
-        .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(45,74,30,0.9); color: #fff; padding: 10px 20px; border-radius: 20px; font-size: 13px; z-index: 200; backdrop-filter: blur(10px); animation: fadeUp 0.3s ease; white-space: nowrap; }
-        @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        @keyframes bounce { 0%, 80%, 100% { transform: translateY(0); opacity: 0.5; } 40% { transform: translateY(-5px); opacity: 1; } }
-        @keyframes float { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-8px); } }
+        .send-btn svg { width: 13px; height: 13px; }
+        .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(45,74,30,0.9); color: #fff; padding: 10px 20px; border-radius: 20px; font-size: 13px; z-index: 300; backdrop-filter: blur(10px); animation: fadeUp 0.3s ease; white-space: nowrap; }
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes bounce { 0%,80%,100% { transform: translateY(0); opacity: 0.5; } 40% { transform: translateY(-4px); opacity: 1; } }
       `}</style>
 
       <ZooBackground animals={zooAnimals} />
       {toast && <div className="toast">{toast}</div>}
 
-      <div className="shell">
-        <div className="hdr">
-          <div className="hdr-left">
-            <span className="hdr-title">小食 🌿</span>
-            <span className="hdr-sub">{locationReady ? "📍 已取得定位" : "尚未取得定位"}</span>
+      <div className="page-root">
+        <div className="top-nav">
+          <div>
+            <div className="app-title">小食 🌿</div>
+            <div className="app-sub">{locationReady ? "📍 已取得定位" : "尚未取得定位"}</div>
           </div>
           <div className="nav-btns">
             <Link href="/zoo" className="nav-btn nav-btn-green">🥚 動物園</Link>
+            <Link href="/gratitude" className="nav-btn nav-btn-orange">🌸 感恩</Link>
             <Link href="/diary" className="nav-btn nav-btn-purple">📖 日記</Link>
           </div>
         </div>
 
-        <div className="msgs">
-          {messages.map((msg) =>
-            msg.role === "assistant" ? (
-              <div key={msg.id} className="msg-row-bot">{renderMessage(msg)}</div>
-            ) : (
-              <div key={msg.id} className="msg-row-user">
-                <div className="bubble-user">{msg.text}</div>
-                {msg.detectedFoods && msg.detectedFoods.length > 0 && (
-                  <FoodChips foods={msg.detectedFoods} onSave={saveFood} />
-                )}
+        <div className="chat-float">
+          <div className="msgs">
+            {messages.map((msg) =>
+              msg.role === "assistant" ? (
+                <div key={msg.id} className="msg-row-bot">{renderMessage(msg)}</div>
+              ) : (
+                <div key={msg.id} className="msg-row-user">
+                  <div className="bubble-user">{msg.text}</div>
+                  {msg.detectedFoods && msg.detectedFoods.length > 0 && (
+                    <FoodChips foods={msg.detectedFoods} onSave={saveFood} />
+                  )}
+                </div>
+              )
+            )}
+            {loading && (
+              <div className="msg-row-bot">
+                <div className="typing"><span /><span /><span /></div>
               </div>
-            )
-          )}
-          {loading && (
-            <div className="msg-row-bot">
-              <div className="typing"><span /><span /><span /></div>
-            </div>
-          )}
-          <div ref={messagesEndRef} />
-        </div>
-
-        <div className="bottom">
-          <div className="action-row">
-            <button className="action-btn" onClick={getLocation}>📍 取得定位</button>
-            <button className="action-btn" onClick={() => fileInputRef.current?.click()}>📷 上傳照片</button>
-            <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }}
-              onChange={(e) => { const file = e.target.files?.[0]; if (file) uploadImage(file); }} />
+            )}
+            <div ref={messagesEndRef} />
           </div>
-          <div className="input-row">
-            <textarea className="input-field"
-              placeholder="想說什麼都可以，也可以問我附近有什麼吃的"
-              value={input} rows={1}
-              onChange={(e) => { setInput(e.target.value); e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }}
-              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-            />
-            <button className="send-btn" onClick={sendMessage} disabled={loading || !input.trim()}>
-              <svg viewBox="0 0 24 24" fill="white"><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>
-            </button>
+
+          <div className="bottom">
+            {gratitudeMode && (
+              <div className="gratitude-bar">
+                <span>🌸 感恩日記 — 已記錄 {gratitudeItems.length} 件</span>
+                <button onClick={finishGratitude} style={{ background: "none", border: "none", fontSize: 11, color: "#a06010", cursor: "pointer" }}>
+                  {gratitudeItems.length > 0 ? "完成並儲存" : "結束"}
+                </button>
+              </div>
+            )}
+            <div className="action-row">
+              <button className="action-btn" onClick={getLocation}>📍 定位</button>
+              <button className="action-btn" onClick={() => fileInputRef.current?.click()}>📷 照片</button>
+              <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }}
+                onChange={(e) => { const file = e.target.files?.[0]; if (file) uploadImage(file); }} />
+              {!gratitudeMode && (
+                <button className="action-btn" onClick={startGratitudeMode} style={{ color: "#a06010", borderColor: "rgba(255,183,77,0.5)" }}>🌸 感恩日記</button>
+              )}
+            </div>
+            <div className="input-row">
+              <textarea className="input-field"
+                placeholder={gratitudeMode ? "分享今天讓你感謝的事…" : "想說什麼都可以，也可以問我附近有什麼吃的"}
+                value={input} rows={1}
+                onChange={(e) => { setInput(e.target.value); e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+              />
+              <button className="send-btn" onClick={sendMessage} disabled={loading || !input.trim()}>
+                <svg viewBox="0 0 24 24" fill="white"><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>
+              </button>
+            </div>
           </div>
         </div>
       </div>

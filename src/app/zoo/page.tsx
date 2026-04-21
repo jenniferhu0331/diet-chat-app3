@@ -8,7 +8,7 @@ import {
 } from "@/lib/animalStore";
 import {
   NotificationSettings, getNotificationSettings, saveNotificationSettings, requestPermission,
-} from "@/lib/notifications";
+} from "@/lib/notification";
 import { getFoodLog } from "@/lib/foodStore";
 
 // ── Weekly progress calculator ─────────────────────────────────────────────────
