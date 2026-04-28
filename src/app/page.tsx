@@ -169,8 +169,7 @@ function EggCard({
   onRefresh: () => void;
   onTaskComplete: (taskId: string, taskName: string) => void;
 }) {
-  const taskFileRef = useRef<HTMLInputElement | null>(null);
-  const [pendingTask, setPendingTask] = useState<{ id: string; name: string } | null>(null);
+
 
   const pts = egg ? effectivePoints(egg) : 0;
   const paused = egg ? isEggPaused(egg) : false;
@@ -180,30 +179,22 @@ function EggCard({
   const isComplete = stage === 4;
   const stageColors = ["#f5f0ea", "#fce4d0", "#e8d5f0", "#d5e8f0", "#d5f0e8"];
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file && pendingTask && egg) {
-      toggleTask(egg.id, pendingTask.id, true);
-      onTaskComplete(pendingTask.id, pendingTask.name);
-      onRefresh();
-    }
-    setPendingTask(null);
-    if (taskFileRef.current) taskFileRef.current.value = "";
-  };
+  
 
   const handleTaskClick = (e: React.MouseEvent, task: Egg["tasks"][0]) => {
-    e.preventDefault();
-    if (!egg) return;
-    if (!task.isCompleted) {
-      setPendingTask({ id: task.id, name: task.description });
-      taskFileRef.current?.click();
-    } else {
-      if (confirm(`要取消「${task.description}」的完成狀態嗎？`)) {
-        toggleTask(egg.id, task.id, false);
-        onRefresh();
-      }
+  e.preventDefault();
+  if (!egg) return;
+  if (!task.isCompleted) {
+    toggleTask(egg.id, task.id, true);
+    onTaskComplete(task.id, task.description);
+    onRefresh();
+  } else {
+    if (confirm(`要取消「${task.description}」的完成狀態嗎？`)) {
+      toggleTask(egg.id, task.id, false);
+      onRefresh();
     }
-  };
+  }
+};
 
   if (!egg) {
     return (
@@ -221,7 +212,6 @@ function EggCard({
 
   return (
     <div style={cardStyle}>
-      <input type="file" accept="image/*" ref={taskFileRef} style={{ display: "none" }} onChange={handleFileChange} />
       <div style={{ display: "flex", gap: 12, alignItems: "stretch" }}>
 
         {/* 左側：蛋 + 進度 */}
@@ -532,7 +522,11 @@ export default function HomePage() {
       const aiTasks: string[] = rawTasks ? JSON.parse(decodeURIComponent(rawTasks)) : [];
 
       // 🌟 前端再次強制攔截！只要有任務陣列，必定是不健康的零食！
-      if (aiTasks.length > 0) {
+      // healthy 永遠不被 aiTasks 覆蓋
+      // healthy 永遠不被 aiTasks 覆蓋，且強制清空 aiTasks
+      if (mealType === "healthy") {
+        aiTasks.length = 0; // 清空，防止後面誤用
+      } else if (aiTasks.length > 0) {
         mealType = "cheat";
       } else if (mealType === "chat") {
         if (["不健康","cheat","炸","甜","零食","垃圾","餅乾"].some(k => userText.toLowerCase().includes(k))) mealType = "cheat";
@@ -540,38 +534,46 @@ export default function HomePage() {
       }
 
       // 更新蛋
-      if (mealType !== "chat") {
-        const currentEgg = getActiveEgg();
-        if (!currentEgg) {
-          // 第一顆蛋
-          createEggFromCheat(foodLabel, aiTasks);
-          refreshEgg();
-          showToast("🥚 代謝蛋誕生了！");
+      // 更新蛋
+if (mealType !== "chat") {
+  const currentEgg = getActiveEgg();
+  if (!currentEgg) {
+    if (mealType === "cheat") {
+      // 沒有蛋 + cheat → 創建新蛋
+      createEggFromCheat(foodLabel, aiTasks);
+      refreshEgg();
+      showToast("🥚 代謝蛋誕生了！");
+    }
+    // 沒有蛋 + healthy → 什麼都不做，就正常聊天（route 已回傳 chat）
+  } else {
+    // 有蛋
+    const result = addEggRecord(mealType as MealType, foodLabel);
+    if (result) {
+      if (mealType === "cheat") {
+        // cheat → 更新或追加任務
+        if (aiTasks.length > 0) {
+          replaceEggTasks(currentEgg.id, aiTasks);
+          showToast("🍕 記錄了，任務已更新");
         } else {
-          const result = addEggRecord(mealType as MealType, foodLabel);
-          if (result) {
-            if (mealType === "cheat") {
-              if (aiTasks.length > 0) {
-                replaceEggTasks(currentEgg.id, aiTasks);
-                showToast("🍕 記錄了，任務已更新");
-              } else {
-                addPenaltyTasks(currentEgg.id);
-                showToast("🍕 記錄了，多了兩個小任務");
-              }
-            } else if (mealType === "healthy") {
-              if (result.newStage > result.prevStage) {
-                const msg = `✨ 蛋升到 ${STAGE_LABELS[result.newStage]}！`;
-                setStageUpMsg(msg);
-                setTimeout(() => setStageUpMsg(null), 3000);
-              } else {
-                showToast(`🥗 健康加速 +${Math.round(result.delta)}%`);
-              }
-            }
-            refreshEgg();
-          }
+          addPenaltyTasks(currentEgg.id);
+          showToast("🍕 記錄了，多了兩個小任務");
         }
+      } else if (mealType === "healthy") {
+        // healthy → 只看進度，不動任務
+        if (result.newStage > result.prevStage) {
+          const msg = `✨ 蛋升到 ${STAGE_LABELS[result.newStage]}！`;
+          setStageUpMsg(msg);
+          setTimeout(() => setStageUpMsg(null), 3000);
+        } else {
+          showToast(`🥗 健康加速 +${Math.round(result.delta)}%`);
+        }
+      } else if (mealType === "tip") {
+        showToast("💧 懲罰減輕了一點點");
       }
-
+      refreshEgg();
+    }
+  }
+}
       // Stream 回應
       const streamId = crypto.randomUUID();
       setMessages(prev => [...prev, { id: streamId, role: "assistant", text: "", mealType }]);
