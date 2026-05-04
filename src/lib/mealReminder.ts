@@ -1,129 +1,142 @@
 // src/lib/mealReminder.ts
-// 早中晚提醒 + 智慧回顧
+// 損友不定時訊息 + 梗圖排程
 
-import { getAllEggs, getActiveEgg, effectivePoints } from "./eggStore";
+export type BuddyMessageType = "morning" | "lunch" | "dinner" | "random" | "meme";
 
-export type MealSlot = "breakfast" | "lunch" | "dinner";
+const BUDDY_MESSAGES = {
+  morning: [
+    "欸你起床了嗎，今天早餐吃什麼？不要說你要跳過早餐喔，聽說跳過早餐會更胖",
+    "早安！今天要繼續跟昨天一樣嗎 😏",
+    "你醒了嗎。昨天說要今天開始認真的那個人",
+    "ㄟ早安，今天第一餐吃什麼？讓我猜猜看，應該不是燕麥吧",
+  ],
+  lunch: [
+    "欸午餐吃什麼？說說看，我不會評論的（才怪）",
+    "午餐時間了！你是要點那個套餐還是... 那個套餐",
+    "欸阿你最近飲控怎麼樣？說真的",
+    "ㄟ吃飯了嗎，還是又在省這一餐",
+  ],
+  dinner: [
+    "晚餐！今天的最後一場了，吃了什麼說來聽聽",
+    "欸你晚餐吃什麼，不要說你不吃晚餐喔那個很傷身體的",
+    "今天整體來說怎樣，有沒有比昨天好一點點",
+    "晚安前最後一次問你，今天吃了什麼 👀",
+  ],
+  random: [
+    "欸你是不是三天沒喝珍奶了，你這樣不行我們應該來喝一杯",
+    "你變瘦我會心疼欸寶寶嗚嗚",
+    "ㄟ我剛夢到你在跑步，醒來嚇了一跳",
+    "你有沒有在想我，我有在想你的體重",
+    "欸今天有沒有比昨天好？說謊的話我看得出來",
+    "我剛看到你愛吃的那家在打折，你還說你在飲控 👁️",
 
-export interface ReminderPayload {
-  slot: MealSlot;
-  title: string;
-  body: string;
-}
+  ],
+};
 
-// 判斷現在是哪個餐段
-export function getCurrentMealSlot(): MealSlot | null {
+const REMINDER_KEY = "buddybite-last-reminder";
+const MEME_KEY = "buddybite-last-meme";
+
+export function getCurrentMealSlot(): "morning" | "lunch" | "dinner" | null {
   const h = new Date().getHours();
-  if (h >= 7  && h < 9)  return "breakfast";
+  if (h >= 7  && h < 10) return "morning";
   if (h >= 12 && h < 14) return "lunch";
   if (h >= 18 && h < 20) return "dinner";
   return null;
 }
 
-// 分析近期飲食記錄，產生回顧文字
-export function buildReviewMessage(): {
-  praise: string | null;
-  suggestion: string | null;
-} {
-  const egg = getActiveEgg();
-  if (!egg) return { praise: null, suggestion: null };
-
-  const records = egg.records.slice(-9); // 最近三天 × 三餐
-  const healthyCount = records.filter(r => r.type === "healthy").length;
-  const cheatCount   = records.filter(r => r.type === "cheat").length;
-  const tipCount     = records.filter(r => r.type === "tip").length;
-  const pts = effectivePoints(egg);
-  const completedTasks = egg.tasks.filter(t => t.isCompleted).length;
-  const totalTasks = egg.tasks.length;
-
-  let praise: string | null = null;
-  let suggestion: string | null = null;
-
-  // 稱讚邏輯
-  if (healthyCount >= 2) {
-    praise = `最近有 ${healthyCount} 次健康飲食的記錄，這讓蛋的孵化進度推進了不少。`;
-  } else if (tipCount >= 1) {
-    praise = `你有在用降低傷害的小方法，這種覺察很值得肯定。`;
-  } else if (completedTasks > 0) {
-    praise = `代謝任務完成了 ${completedTasks}/${totalTasks} 個，執行力很好。`;
-  }
-
-  // 建議邏輯（只在真的有問題時說）
-  if (cheatCount >= 3 && healthyCount === 0) {
-    suggestion = `最近幾餐比較重口味，下一餐可以考慮補充蔬菜或蛋白質讓身體平衡一下。`;
-  } else if (totalTasks > 0 && completedTasks === 0) {
-    suggestion = `代謝任務還沒開始，完成任務會讓蛋掉落孵化素材喔。`;
-  } else if (egg.penaltyDays > 3) {
-    suggestion = `目前累積了 ${egg.penaltyDays.toFixed(1)} 天的延遲，多記錄幾次健康餐可以慢慢補回來。`;
-  }
-
-  return { praise, suggestion };
+export function getRandomBuddyMessage(type: keyof typeof BUDDY_MESSAGES): string {
+  const pool = BUDDY_MESSAGES[type];
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
-// 產生提醒內容
-export function buildReminderPayload(slot: MealSlot): ReminderPayload {
-  const { praise, suggestion } = buildReviewMessage();
-  const egg = getActiveEgg();
-  const pts = egg ? Math.round(effectivePoints(egg)) : 0;
+// In-app notification callback
+type MemeData = { memeUrl: string };
+type NotificationCallback = (msg: string, type: "text" | "meme", memeData?: MemeData) => void;
+let _notifyCb: NotificationCallback | null = null;
 
-  const slotLabel: Record<MealSlot, string> = {
-    breakfast: "早餐",
-    lunch: "午餐",
-    dinner: "晚餐",
-  };
-
-  const greetings: Record<MealSlot, string> = {
-    breakfast: "早安！該吃早餐了",
-    lunch: "午安，午餐時間到了",
-    dinner: "晚上好，記得吃晚餐",
-  };
-
-  let body = greetings[slot];
-  if (egg) body += `（蛋目前 ${pts}%）`;
-  body += "。";
-  if (praise) body += ` ${praise}`;
-  if (suggestion) body += ` ${suggestion}`;
-  if (!praise && !suggestion) body += " 記錄今天的飲食，讓蛋繼續孵化。";
-
-  return {
-    slot,
-    title: `🥚 ${slotLabel[slot]}提醒`,
-    body,
-  };
-}
-
-// 啟動排程（每分鐘檢查一次，避免重複推播用 localStorage 記錄）
-const REMINDER_KEY = "buddybite-last-reminder";
-
-export function startMealReminderScheduler() {
-  if (typeof window === "undefined") return;
-
-  const check = () => {
-    const slot = getCurrentMealSlot();
-    if (!slot) return;
-
-    // 同一個餐段今天只推一次
-    const lastRaw = localStorage.getItem(REMINDER_KEY);
-    const last = lastRaw ? JSON.parse(lastRaw) : null;
-    const todaySlotKey = `${new Date().toDateString()}-${slot}`;
-    if (last?.key === todaySlotKey) return;
-
-    // 推播通知
-    if (Notification.permission === "granted") {
-      const payload = buildReminderPayload(slot);
-      new Notification(payload.title, { body: payload.body, icon: "/favicon.ico" });
-      localStorage.setItem(REMINDER_KEY, JSON.stringify({ key: todaySlotKey }));
-    }
-  };
-
-  // 先檢查一次，再每分鐘跑
-  check();
-  return setInterval(check, 60 * 1000);
+export function setNotificationCallback(cb: NotificationCallback) {
+  _notifyCb = cb;
 }
 
 export async function requestReminderPermission(): Promise<boolean> {
   if (typeof Notification === "undefined") return false;
   if (Notification.permission === "granted") return true;
-  const result = await Notification.requestPermission();
-  return result === "granted";
+  const r = await Notification.requestPermission();
+  return r === "granted";
+}
+
+async function sendMemeNotification() {
+  try {
+    const triggers = ["random", "morning", "evening"] as const;
+    const trigger = triggers[Math.floor(Math.random() * triggers.length)];
+    
+    const res = await fetch("/api/meme", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ trigger }),
+    });
+    const data = await res.json();
+    
+    if (data.bgUrl) {
+      if (Notification.permission === "granted") {
+        new Notification("小餅傳來梗圖", {
+          body: data.caption ?? "（沒有說話）",
+          icon: "/favicon.ico",
+        });
+      }
+      if (_notifyCb) _notifyCb(data.caption ?? "", "meme", { memeUrl: data.memeUrl });
+    }
+  } catch {}
+}
+
+function sendBuddyTextMessage(msg: string) {
+  if (Notification.permission === "granted") {
+    new Notification("小餅", { body: msg, icon: "/favicon.ico" });
+  }
+  if (_notifyCb) _notifyCb(msg, "text");
+}
+
+export function startMealReminderScheduler() {
+  if (typeof window === "undefined") return;
+
+  const checkAndSend = async () => {
+    const now = Date.now();
+    const lastRaw = localStorage.getItem(REMINDER_KEY);
+    const lastMemeRaw = localStorage.getItem(MEME_KEY);
+    const last = lastRaw ? JSON.parse(lastRaw) : null;
+    const lastMeme = lastMemeRaw ? JSON.parse(lastMemeRaw) : null;
+
+    const todayStr = new Date().toDateString();
+    const slot = getCurrentMealSlot();
+
+    // 三餐提醒（每個時段一天一次）
+    if (slot) {
+      const slotKey = `${todayStr}-${slot}`;
+      if (!last || last.key !== slotKey) {
+        const msg = getRandomBuddyMessage(slot);
+        sendBuddyTextMessage(msg);
+        localStorage.setItem(REMINDER_KEY, JSON.stringify({ key: slotKey, time: now }));
+      }
+    }
+
+    // 不定時梗圖（每 2~4 小時隨機一次）
+    const memeIntervalMs = (2 + Math.random() * 2) * 60 * 60 * 1000;
+    if (!lastMeme || now - lastMeme.time > memeIntervalMs) {
+      await sendMemeNotification();
+      localStorage.setItem(MEME_KEY, JSON.stringify({ time: now }));
+    }
+
+    // 隨機損友訊息（每天 1~3 次，隨機時間）
+    const randomKey = `${todayStr}-random`;
+    const randomCount = parseInt(localStorage.getItem(randomKey) ?? "0");
+    if (randomCount < 2 && Math.random() < 0.05) {
+      const msg = getRandomBuddyMessage("random");
+      sendBuddyTextMessage(msg);
+      localStorage.setItem(randomKey, String(randomCount + 1));
+    }
+  };
+
+  // 每分鐘檢查
+  checkAndSend();
+  return setInterval(checkAndSend, 60 * 1000);
 }
