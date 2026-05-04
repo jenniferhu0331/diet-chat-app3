@@ -6,16 +6,16 @@ import { ImageResponse } from "@vercel/og";
 export const runtime = "edge";
 
 const BG_IMAGES = [
-  { url: "https://api.memegen.link/images/fry/_.png",       mood: "懷疑、不確定" },
-  { url: "https://api.memegen.link/images/rollsafe/_.png",  mood: "自以為聰明的歪理邏輯" },
-  { url: "https://api.memegen.link/images/ams/_.png",       mood: "尷尬、搞砸某件事" },
-  { url: "https://api.memegen.link/images/fine/_.png",      mood: "明明很糟卻說沒事" },
-  { url: "https://api.memegen.link/images/waiting/_.png",   mood: "等了很久還是沒發生" },
-  { url: "https://api.memegen.link/images/bad/_.png",       mood: "你真的很糟糕" },
-  { url: "https://api.memegen.link/images/balloon/_.png",   mood: "逃避某件事" },
-  { url: "https://api.memegen.link/images/bike-fall/_.png", mood: "自己害自己、搞砸計畫" },
-  { url: "https://api.memegen.link/images/ds/_.png",        mood: "拒絕健康、接受垃圾食物" },
-  { url: "https://api.memegen.link/images/buzz/_.png",      mood: "到處都是誘惑食物" },
+  { url: "https://api.memegen.link/images/fry.png",       mood: "懷疑、不確定" },
+  { url: "https://api.memegen.link/images/rollsafe.png",  mood: "自以為聰明的歪理邏輯" },
+  { url: "https://api.memegen.link/images/ams.png",       mood: "尷尬、搞砸某件事" },
+  { url: "https://api.memegen.link/images/fine.png",      mood: "明明很糟卻說沒事" },
+  { url: "https://api.memegen.link/images/waiting.png",   mood: "等了很久還是沒發生" },
+  { url: "https://api.memegen.link/images/bad.png",       mood: "你真的很糟糕" },
+  { url: "https://api.memegen.link/images/balloon.png",   mood: "逃避某件事" },
+  { url: "https://api.memegen.link/images/bike-fall.png", mood: "自己害自己、搞砸計畫" },
+  { url: "https://api.memegen.link/images/ds.png",        mood: "拒絕健康、接受垃圾食物" },
+  { url: "https://api.memegen.link/images/buzz.png",      mood: "到處都是誘惑食物" },
 ] as const;
 
 async function generateTexts(trigger: string, context: string, mood: string) {
